@@ -15,7 +15,7 @@ draft ──(owner approves + uploads image)──▶ approved ──(daily cron
 - **approved** — a human (the founder) reviewed the copy and uploaded the image generated from the piece's `imagePrompt`. Nothing is published without this step.
 - **published** / **failed** — set by the daily publish cron depending on whether the Instagram Graph API call succeeded.
 
-See `docs/02-playbook-conteudo.md` for the full editorial contract (content pillars, anti-repetition rotation, forbidden claims, tone rules) that every generated piece must follow.
+See `docs/02-playbook-conteudo.md` for the full editorial contract (content pillars, anti-repetition rotation, forbidden claims, tone rules) that every generated piece must follow, and `docs/rotina-geracao.md` for the operational guide to configure the weekly scheduled generation routine (prompt to paste, env vars, `/schedule` steps, guard-rails).
 
 ## Stack
 
