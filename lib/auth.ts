@@ -19,3 +19,20 @@ export function requireGenerationToken(req: NextRequest): Response | null {
 
   return null;
 }
+
+/**
+ * Bearer-token guard for the daily publish cron (GET /api/cron/publish).
+ * Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` automatically
+ * when the CRON_SECRET env var is set on the project — see README "Publicação".
+ */
+export function requireCronSecret(req: NextRequest): Response | null {
+  const expected = process.env.CRON_SECRET;
+  const header = req.headers.get("authorization");
+  const provided = header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : null;
+
+  if (!expected || !provided || provided !== expected) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  return null;
+}

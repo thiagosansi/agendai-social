@@ -67,6 +67,34 @@ pnpm claim-check --text "Seus clientes marcam horário sozinhos, pelo link."
 
 `checkText`/`loadRules` are also exported from `scripts/claim-check.mjs` so the piece-creation API route can reuse the same validation server-side.
 
+## Publicação
+
+`GET /api/cron/publish` is the daily publish cron. It picks up every `Piece` with `status=approved`, `publishAt <= now` and `igMediaId IS NULL` (that last condition is the idempotency guard — a piece already carrying an `igMediaId` is never reprocessed; the only way back into the queue is a human resetting it, e.g. via `PATCH` back to `draft`/`approved`), processes them **sequentially**, and never lets one piece's failure abort the run — each piece is wrapped individually, so a bad caption, an unsupported format, or a Meta API error only marks that one piece `failed` (with an actionable `lastError`) and the loop continues to the next piece.
+
+Format → Graph API container mapping (`lib/instagram.ts`):
+
+- `estatico` → single-image post
+- `stories` → Stories container
+- `carrossel` → **v1 simplification**: publishes as a single-image post, not a true multi-image carousel. `Piece` only stores one `imageUrl` today; `createCarouselContainer` (real multi-image carousels, one child container per image) is implemented in `lib/instagram.ts` but unused until the schema grows an `imageUrls[]` field.
+- `reels` → always fails with `lastError: "vídeo ainda não suportado"` — no video upload support yet.
+
+Before calling Meta, the cron also re-runs the claim-check on the caption (a violation fails the piece, same as the API routes) and rejects local dev image uploads (`imageUrl` starting with `/uploads/`, the fallback path `POST /api/pieces/[id]/image` uses when `BLOB_READ_WRITE_TOKEN` is unset) — Meta's servers can't fetch a `localhost`/relative URL, so those pieces fail with an actionable `lastError` telling you to configure Vercel Blob and re-upload.
+
+**Dry-run** — `GET /api/cron/publish?dry=1` (or set `PUBLISH_DRY_RUN=1`) runs every check above but never calls the Graph API and never mutates the database. Eligible pieces come back with `outcome: "skipped"` (they *would* publish, the real call was just held back) instead of `"published"`. Use it to sanity-check the queue before flipping a piece — or the whole cron — live:
+
+```bash
+PORT=3020 pnpm dev   # one terminal
+pnpm publish:dry      # another — GETs /api/cron/publish?dry=1 with CRON_SECRET from .env
+```
+
+Auth: same bearer-token pattern as `GENERATION_API_TOKEN` (see `lib/auth.ts`) — `Authorization: Bearer <CRON_SECRET>`, 401 otherwise. Vercel Cron sends this header automatically when the `CRON_SECRET` env var is set on the project (Project Settings → Environment Variables), so no extra wiring is needed once it's deployed.
+
+**Schedule**: `vercel.json` sets `0 14 * * *` (UTC — `vercel.json` doesn't support comments, hence the note here) which is **11:00 America/Sao_Paulo**. Adjust the cron expression if the target timezone's UTC offset changes (e.g. DST elsewhere is irrelevant, but Brazil's own historical DST rules would matter if reintroduced).
+
+**Meta setup**: you need an Instagram **Business** or **Creator** account connected to a Facebook Page, a Meta app with the `instagram_content_publish` permission, and a long-lived Page/IG access token — see [Meta's Content Publishing docs](https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/content-publishing). Set `META_IG_USER_ID` and `META_IG_TOKEN` accordingly; `META_TOKEN_EXPIRES_AT` is informational only today (no automated warning yet).
+
+**Status**: `META_IG_USER_ID`/`META_IG_TOKEN` are **not configured in this environment** — a real end-to-end publish (creating a container, polling it to `FINISHED`, calling `media_publish`, and confirming a live post) is **pending those credentials**. Everything up to that point (idempotency guard, claim-check re-run, format mapping, local-upload rejection, dry-run) is implemented and covered by the dry-run script; once credentials are available, `pnpm publish:dry` without `?dry=1` semantics (i.e. a real un-flagged cron hit) is the way to validate the first live post.
+
 ## Status
 
-This is the scaffold. The `Piece` Prisma model, the pieces API, the approval web UI, and the Instagram Graph API publish/insights crons are implemented in follow-up work.
+This is the scaffold. The `Piece` Prisma model, the pieces API, and the Instagram Graph API publish cron are implemented. The approval web UI and the insights cron are follow-up work.

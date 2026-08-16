@@ -11,7 +11,8 @@
     "claim-check": "node scripts/claim-check.mjs",
     "db:up": "docker compose up -d",
     "db:migrate": "prisma migrate dev",
-    "smoke": "node scripts/api-smoke.mjs"
+    "smoke": "node scripts/api-smoke.mjs",
+    "publish:dry": "node scripts/publish-dry-run.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
