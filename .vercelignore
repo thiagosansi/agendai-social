@@ -1,0 +1,10 @@
+# Vercel CLI deploys (`vercel deploy`) upload the local working directory and
+# do not fully honor .gitignore for dotfiles — local env files were observed
+# leaking into a build (local DATABASE_URL used instead of the Production
+# value). Exclude them explicitly. Production env vars always come from
+# `vercel env add` / the Vercel dashboard, never from these local files.
+.env
+.env.local
+.env.production.local
+.env.production.notes
+agendai_social.db
