@@ -9,9 +9,10 @@ export const runtime = "nodejs";
 const STALE_SCHEDULE_MS = 24 * 60 * 60 * 1000;
 
 // PATCH /api/pieces/[id]
-// Updates caption, publishAt and/or status (draft <-> approved only —
-// published/failed are exclusively set by the daily publish cron, and the
-// zod schema rejects any other status value before we get here). Not gated
+// Updates caption, publishAt and/or status. Status transitions accepted here:
+// draft <-> approved, and failed -> draft (recovery after a failed publish
+// attempt). published is exclusively set by the daily publish cron, and the
+// zod schema rejects any other status value before we get here. Not gated
 // by the generation token — see lib/auth.ts for why.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -75,7 +76,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       );
     }
   } else if (status === PieceStatus.draft) {
-    if (existing.status !== PieceStatus.approved && existing.status !== PieceStatus.draft) {
+    // approved -> draft: unapprove. failed -> draft: recovery after a failed
+    // publish attempt (e.g. missing Meta credentials), so the founder can
+    // fix the issue and re-approve for the next cron run.
+    if (
+      existing.status !== PieceStatus.approved &&
+      existing.status !== PieceStatus.draft &&
+      existing.status !== PieceStatus.failed
+    ) {
       return Response.json(
         { error: `cannot unapprove a piece with status "${existing.status}"` },
         { status: 422 },
