@@ -95,6 +95,20 @@ Auth: same bearer-token pattern as `GENERATION_API_TOKEN` (see `lib/auth.ts`) �
 
 **Status**: `META_IG_USER_ID`/`META_IG_TOKEN` are **not configured in this environment** — a real end-to-end publish (creating a container, polling it to `FINISHED`, calling `media_publish`, and confirming a live post) is **pending those credentials**. Everything up to that point (idempotency guard, claim-check re-run, format mapping, local-upload rejection, dry-run) is implemented and covered by the dry-run script; once credentials are available, `pnpm publish:dry` without `?dry=1` semantics (i.e. a real un-flagged cron hit) is the way to validate the first live post.
 
+## Análise de desempenho
+
+Two more pieces close the loop between "what got published" and "what to generate next":
+
+- **`GET /api/cron/insights`** — weekly cron (`vercel.json`, Monday 09:00 America/Sao_Paulo). For every `published` Piece with an `igMediaId` from the last 8 weeks, fetches Instagram insights (`lib/instagram.ts`'s `getMediaInsights`, metric set chosen by `format`: feed image/carrossel gets `reach/saved/likes/comments/shares/views`, `stories` gets `reach/navigation` — only available while the story exists, ~24h) and merges them into `Piece.metrics`, preserving any fields already there. Pieces published less than 48h ago are skipped (metrics are still settling), not failed. Also records one `AccountSnapshot` (follower count, via `getAccountInfo`) per run, independent of whether any piece was updated. Same error-isolation pattern as the publish cron: one piece's Meta API failure only skips that piece. If `META_IG_USER_ID`/`META_IG_TOKEN` aren't configured, the cron returns `200 {"skipped": "credentials not configured"}` instead of failing — same non-fatal posture as the publish cron's missing-credentials case.
+- **`GET /api/report/latest`** — read-only report over the last 8 weeks of published Pieces: totals, a `pillar+format` ranking by average engagement (`likes+comments+saved+shares`), the last 8 `AccountSnapshot` follower counts, and 1-3 mechanical recommendations (best combo → "priorize X+Y", a distinct worst combo with ≥2 data points → "evite/reformule X+Y", or a single "sem dados suficientes" line when the window is empty — no LLM call happens in this route). Also carries a `tokenWarning` string derived from `META_TOKEN_EXPIRES_AT` (missing env, expiring in under 10 days, or already expired all produce a message; otherwise `null`) and a `markdown` field rendering the same data as prose, meant to be embedded directly by the generation routine ahead of its next round (`docs/02-playbook-conteudo.md` §6). Requires `GENERATION_API_TOKEN`, same as `POST /api/pieces`.
+
+**Fixture / smoke check** — `scripts/insights-fixture.mjs` seeds 6 already-published Pieces (fake `igMediaId` + metrics, spanning 3 pillar/format combos) and 2 `AccountSnapshot` rows directly via Prisma (there's no API path to create an already-`published` Piece with metrics — that's the two crons' job), hits `GET /api/report/latest` against a running dev server, prints the ranking + recommendations, then deletes every row it created (tracked by id, not by a broad sweep):
+
+```bash
+PORT=3030 pnpm dev     # one terminal
+pnpm report:fixture     # another — seeds, calls the endpoint, cleans up
+```
+
 ## Status
 
-This is the scaffold. The `Piece` Prisma model, the pieces API, and the Instagram Graph API publish cron are implemented. The approval web UI and the insights cron are follow-up work.
+This is the scaffold. The `Piece` Prisma model, the pieces API, the Instagram Graph API publish cron, and the insights cron + performance report are implemented.

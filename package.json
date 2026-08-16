@@ -12,7 +12,8 @@
     "db:up": "docker compose up -d",
     "db:migrate": "prisma migrate dev",
     "smoke": "node scripts/api-smoke.mjs",
-    "publish:dry": "node scripts/publish-dry-run.mjs"
+    "publish:dry": "node scripts/publish-dry-run.mjs",
+    "report:fixture": "node scripts/insights-fixture.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

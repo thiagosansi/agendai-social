@@ -60,3 +60,17 @@ enum PieceStatus {
   published
   failed
 }
+
+// One row per weekly insights cron run (app/api/cron/insights/route.ts) —
+// tracks the IG Business account's follower count over time so
+// GET /api/report/latest can render a followersTrend. `metrics` is reserved
+// for future account-level insight fields (e.g. profile_views) beyond
+// followers_count; unused today.
+model AccountSnapshot {
+  id             String   @id @default(cuid())
+  capturedAt     DateTime @default(now())
+  followersCount Int
+  metrics        Json?
+
+  @@index([capturedAt])
+}

@@ -227,3 +227,128 @@ export async function getMediaPermalink(mediaId: string): Promise<string | null>
   });
   return permalink ?? null;
 }
+
+// --- Insights (app/api/cron/insights/route.ts) ---------------------------
+//
+// Meta's insights metric set differs by media product type, and older API
+// versions reject the whole /insights call if ANY requested metric is
+// unsupported for that specific media (a metric added in a later API
+// version, or a Stories metric requested after its 24h insights window has
+// closed). getMediaInsights below requests the full set first, and only
+// falls back to fetching metrics one at a time if that batched call fails
+// — so a single unsupported metric never costs the ones that ARE available.
+
+/** Which Graph API metric set to request — mirrors media_product_type. */
+export type MediaProductType = "FEED" | "STORY" | "REELS";
+
+// Feed (single image / carrossel-as-single-image, per README "v1
+// simplification"): reach, saves and interactions are stable metrics;
+// `views` was added in a later API version and isn't valid on every media,
+// hence the per-metric fallback.
+const FEED_INSIGHTS_METRICS = ["reach", "saved", "likes", "comments", "shares", "views"];
+
+// Stories: only available while the story exists (~24h). `navigation`
+// replaced the older tap-forward/tap-back/exit breakdown metrics.
+const STORY_INSIGHTS_METRICS = ["reach", "navigation"];
+
+// Reels: not published by this app yet (see README "Publicação" — reels
+// always fails with "vídeo ainda não suportado"), kept here so the insights
+// cron degrades gracefully instead of crashing if a Reels media ever shows
+// up (e.g. after a future feature adds video support).
+const REELS_INSIGHTS_METRICS = ["reach", "saved", "likes", "comments", "shares", "plays"];
+
+function metricsForProductType(mediaProductType: MediaProductType): string[] {
+  switch (mediaProductType) {
+    case "STORY":
+      return STORY_INSIGHTS_METRICS;
+    case "REELS":
+      return REELS_INSIGHTS_METRICS;
+    case "FEED":
+    default:
+      return FEED_INSIGHTS_METRICS;
+  }
+}
+
+export interface MediaInsights {
+  reach?: number;
+  saved?: number;
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  views?: number;
+  navigation?: number;
+  plays?: number;
+}
+
+interface InsightsApiValue {
+  name: string;
+  values?: Array<{ value: number }>;
+  total_value?: { value: number };
+}
+
+interface InsightsApiResponse {
+  data?: InsightsApiValue[];
+}
+
+function collectInsights(response: InsightsApiResponse): MediaInsights {
+  const result: MediaInsights = {};
+  for (const entry of response.data ?? []) {
+    const value = entry.total_value?.value ?? entry.values?.[0]?.value;
+    if (value !== undefined) {
+      (result as Record<string, number>)[entry.name] = value;
+    }
+  }
+  return result;
+}
+
+/**
+ * Fetches insights for a single published media. Tolerates individual
+ * unsupported/unavailable metrics (returning fewer fields) instead of
+ * throwing — only a genuinely broken request (expired token, deleted
+ * media, rate limit) surfaces as an InstagramApiError. Callers should
+ * treat an empty result as "nothing available yet", not an error.
+ */
+export async function getMediaInsights(
+  mediaId: string,
+  mediaProductType: MediaProductType = "FEED",
+): Promise<MediaInsights> {
+  const { token } = getConfig();
+  const metricNames = metricsForProductType(mediaProductType);
+
+  try {
+    const response = await graphGet<InsightsApiResponse>(`/${mediaId}/insights`, token, {
+      metric: metricNames.join(","),
+    });
+    return collectInsights(response);
+  } catch {
+    // At least one requested metric isn't available for this media — retry
+    // metric by metric so the ones that ARE available aren't lost too.
+  }
+
+  const result: MediaInsights = {};
+  for (const metric of metricNames) {
+    try {
+      const response = await graphGet<InsightsApiResponse>(`/${mediaId}/insights`, token, { metric });
+      Object.assign(result, collectInsights(response));
+    } catch {
+      // Tolerate: this single metric isn't available for this media (e.g.
+      // a Stories metric requested after the 24h insights window closed).
+    }
+  }
+  return result;
+}
+
+export interface AccountInfo {
+  followersCount: number | null;
+}
+
+/** Fetches the IG Business account's current follower count. */
+export async function getAccountInfo(): Promise<AccountInfo> {
+  const { igUserId, token } = getConfig();
+  const { followers_count: followersCount } = await graphGet<{ followers_count?: number }>(
+    `/${igUserId}`,
+    token,
+    { fields: "followers_count" },
+  );
+  return { followersCount: followersCount ?? null };
+}
