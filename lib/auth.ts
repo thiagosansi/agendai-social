@@ -36,3 +36,19 @@ export function requireCronSecret(req: NextRequest): Response | null {
 
   return null;
 }
+
+/**
+ * Same-origin guard for the settings PATCH endpoint (app/api/settings/route.ts).
+ * The Config page (behind APP_PASSWORD basic auth via middleware.ts) calls this
+ * endpoint with a plain same-origin fetch, and modern browsers attach the Fetch
+ * Metadata `Sec-Fetch-Site` header automatically — no bearer token needed for
+ * this single-user app. Cross-site requests (or tools that omit the header
+ * entirely, like curl) are rejected.
+ */
+export function requireSameOrigin(req: NextRequest): Response | null {
+  const secFetchSite = req.headers.get("sec-fetch-site");
+  if (secFetchSite !== "same-origin") {
+    return Response.json({ error: "cross-origin request rejected" }, { status: 403 });
+  }
+  return null;
+}

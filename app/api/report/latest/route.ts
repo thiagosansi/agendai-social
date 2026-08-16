@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireGenerationToken } from "@/lib/auth";
+import { getSetting } from "@/lib/settings";
 
 export const runtime = "nodejs";
 
@@ -241,6 +242,13 @@ export async function GET(req: NextRequest) {
     tokenWarning,
   });
 
+  // Kill switch for the AI generation routine (Config page "Pausar geração de
+  // conteúdo" toggle). This endpoint keeps computing and returning the full
+  // report even when paused — the report is still useful to read — the
+  // routine itself is the one that reads this flag and aborts before
+  // creating any draft (so no Claude quota is spent).
+  const generationPaused = await getSetting("generationPaused");
+
   return Response.json({
     generatedAt,
     window: WINDOW_LABEL,
@@ -250,5 +258,6 @@ export async function GET(req: NextRequest) {
     recommendations,
     tokenWarning,
     markdown,
+    generationPaused,
   });
 }

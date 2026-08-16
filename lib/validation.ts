@@ -34,3 +34,17 @@ export type PatchPieceInput = z.infer<typeof patchPieceSchema>;
 
 export const ALLOWED_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+// PATCH /api/settings — partial update of the pause/kill-switch flags in
+// AppSetting (lib/settings.ts). Both fields optional so the Config page can
+// toggle one switch at a time.
+export const patchSettingsSchema = z
+  .object({
+    generationPaused: z.boolean().optional(),
+    publishingPaused: z.boolean().optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: "at least one of generationPaused, publishingPaused must be provided",
+  });
+
+export type PatchSettingsInput = z.infer<typeof patchSettingsSchema>;

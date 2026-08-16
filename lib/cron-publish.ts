@@ -1,6 +1,7 @@
 import { PieceFormat, PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { checkText, loadRules } from "@/lib/claim-check";
+import { getSetting } from "@/lib/settings";
 import {
   InstagramApiError,
   createImageContainer,
@@ -63,6 +64,7 @@ export interface PublishPayload {
   failed: number;
   skipped: number;
   results: PublishResult[];
+  paused?: true;
 }
 
 // Publishes every approved Piece whose publishAt has passed and that hasn't
@@ -80,6 +82,14 @@ export interface PublishPayload {
 // published, but the real Meta call was skipped), not "published".
 export async function runPublish(options: { dryRun: boolean }): Promise<PublishPayload> {
   const { dryRun } = options;
+
+  // Kill switch (Config page "Pausar publicações" toggle). Checked before
+  // touching anything else — no query, no claim-check, no Graph API call —
+  // so approved pieces just sit and wait for the next unpaused run.
+  const publishingPaused = await getSetting("publishingPaused");
+  if (publishingPaused) {
+    return { paused: true, processed: 0, published: 0, failed: 0, skipped: 0, results: [] };
+  }
 
   const now = new Date();
   const pieces = await prisma.piece.findMany({
