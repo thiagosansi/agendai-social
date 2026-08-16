@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# local dev image uploads (used only when BLOB_READ_WRITE_TOKEN is unset)
+/public/uploads
 
 # vercel
 .vercel

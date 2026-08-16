@@ -1,6 +1,4 @@
 // Prisma schema for Agendaí Social Studio.
-// Models (Piece, etc.) are added in a later task — this is the empty
-// baseline so `prisma migrate dev` and `prisma generate` work from day one.
 
 generator client {
   provider = "prisma-client-js"
@@ -9,4 +7,56 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// A single Instagram content piece, following the lifecycle described in
+// README.md and docs/02-playbook-conteudo.md: draft -> approved -> published
+// (or failed). `pillar` and `segment` are free-form strings keyed to the
+// editorial contract in docs/02-playbook-conteudo.md §2 (content pillars a-f
+// and the segment rotation) rather than enums, since that rotation is
+// expected to evolve without a schema migration.
+model Piece {
+  id     String @id @default(cuid())
+  pillar String
+  segment String
+
+  format  PieceFormat
+  caption String
+  imagePrompt String
+
+  // Set by the founder during approval (POST /api/pieces/[id]/image); never
+  // writable directly through POST/PATCH.
+  imageUrl String?
+
+  publishAt DateTime
+  status    PieceStatus @default(draft)
+
+  // Set only by the daily publish cron (a later task) after a successful
+  // Instagram Graph API call.
+  igMediaId    String?
+  igPermalink  String?
+  metrics      Json?
+
+  claimCheckPassed Boolean @default(false)
+  lastError        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, publishAt])
+  @@index([pillar, segment, format, publishAt])
+}
+
+enum PieceFormat {
+  carrossel
+  reels
+  estatico
+  stories
+}
+
+enum PieceStatus {
+  draft
+  approved
+  published
+  failed
 }
