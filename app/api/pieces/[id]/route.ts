@@ -36,7 +36,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     );
   }
 
-  const { caption, publishAt, status } = parsed.data;
+  const { caption, imagePrompt, publishAt, status } = parsed.data;
 
   // Re-run claim-check whenever the caption changes; abort entirely (no
   // partial update) if it fails, same as POST /api/pieces.
@@ -85,6 +85,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const data: Prisma.PieceUpdateInput = {
     ...(caption !== undefined ? { caption, claimCheckPassed } : {}),
+    ...(imagePrompt !== undefined ? { imagePrompt } : {}),
     ...(publishAt !== undefined ? { publishAt } : {}),
     ...(status !== undefined ? { status } : {}),
   };

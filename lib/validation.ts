@@ -22,11 +22,12 @@ export type CreatePieceInput = z.infer<typeof createPieceSchema>;
 export const patchPieceSchema = z
   .object({
     caption: z.string().trim().min(1).optional(),
+    imagePrompt: z.string().trim().min(1).optional(),
     publishAt: z.coerce.date().optional(),
     status: z.enum(CLIENT_SETTABLE_STATUSES).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
-    message: "at least one of caption, publishAt, status must be provided",
+    message: "at least one of caption, imagePrompt, publishAt, status must be provided",
   });
 
 export type PatchPieceInput = z.infer<typeof patchPieceSchema>;

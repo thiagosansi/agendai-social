@@ -46,6 +46,16 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
   const [captionError, setCaptionError] = useState<string | null>(null);
   const [captionViolations, setCaptionViolations] = useState<ClaimCheckViolation[]>([]);
 
+  const [promptValue, setPromptValue] = useState(piece.imagePrompt);
+  const [syncedPrompt, setSyncedPrompt] = useState(piece.imagePrompt);
+  if (piece.imagePrompt !== syncedPrompt) {
+    setSyncedPrompt(piece.imagePrompt);
+    setPromptValue(piece.imagePrompt);
+  }
+  const [savingPrompt, setSavingPrompt] = useState(false);
+  const [promptError, setPromptError] = useState<string | null>(null);
+  const [editingPrompt, setEditingPrompt] = useState(false);
+
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -56,6 +66,7 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
   const [copied, setCopied] = useState(false);
 
   const captionDirty = captionValue.trim() !== piece.caption && captionValue.trim().length > 0;
+  const promptDirty = promptValue.trim() !== piece.imagePrompt && promptValue.trim().length > 0;
 
   async function saveCaption() {
     setSavingCaption(true);
@@ -78,6 +89,29 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
       setCaptionError("Falha de rede ao salvar a legenda.");
     } finally {
       setSavingCaption(false);
+    }
+  }
+
+  async function savePrompt() {
+    setSavingPrompt(true);
+    setPromptError(null);
+    try {
+      const res = await fetch(`/api/pieces/${piece.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ imagePrompt: promptValue.trim() }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setPromptError(body.error ?? "Não foi possível salvar o prompt.");
+        return;
+      }
+      setEditingPrompt(false);
+      router.refresh();
+    } catch {
+      setPromptError("Falha de rede ao salvar o prompt.");
+    } finally {
+      setSavingPrompt(false);
     }
   }
 
@@ -170,22 +204,128 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
       </div>
 
       {piece.imageUrl ? (
-        <div className="relative aspect-square w-full overflow-hidden rounded-md bg-zinc-100">
-          {/* eslint-disable-next-line @next/next/no-img-element -- image can come from same-origin /uploads or an arbitrary Vercel Blob host in prod */}
-          <img src={piece.imageUrl} alt="" className="h-full w-full object-cover" />
+        <div className="flex flex-col gap-2">
+          <div className="relative aspect-square w-full overflow-hidden rounded-md bg-zinc-100">
+            {/* eslint-disable-next-line @next/next/no-img-element -- image can come from same-origin /uploads or an arbitrary Vercel Blob host in prod */}
+            <img src={piece.imageUrl} alt="" className="h-full w-full object-cover" />
+          </div>
+
+          <details className="rounded-md border border-zinc-200 p-2">
+            <summary className="cursor-pointer text-sm font-medium text-zinc-700">
+              Ver/editar prompt
+            </summary>
+            <div className="mt-2 flex flex-col gap-2">
+              {!editingPrompt ? (
+                <>
+                  <p className="whitespace-pre-wrap text-sm text-zinc-600">{piece.imagePrompt}</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={copyPrompt}
+                      className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white"
+                    >
+                      {copied ? "Copiado!" : "Copiar prompt"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingPrompt(true)}
+                      className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+                    >
+                      Editar
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <textarea
+                    value={promptValue}
+                    onChange={(e) => setPromptValue(e.target.value)}
+                    rows={3}
+                    className="w-full resize-none rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={savePrompt}
+                      disabled={savingPrompt || !promptDirty}
+                      className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                    >
+                      {savingPrompt ? "Salvando..." : "Salvar"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingPrompt(false);
+                        setPromptValue(piece.imagePrompt);
+                        setPromptError(null);
+                      }}
+                      disabled={savingPrompt}
+                      className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                  {promptError && <p className="text-sm text-red-600">{promptError}</p>}
+                </>
+              )}
+            </div>
+          </details>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <div className="rounded-md border border-dashed border-zinc-300 p-3 text-sm text-zinc-600">
-            <p className="whitespace-pre-wrap">{piece.imagePrompt}</p>
-            <button
-              type="button"
-              onClick={copyPrompt}
-              className="mt-2 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white"
-            >
-              {copied ? "Copiado!" : "Copiar prompt"}
-            </button>
-          </div>
+          {!editingPrompt ? (
+            <div className="rounded-md border border-dashed border-zinc-300 p-3 text-sm text-zinc-600">
+              <p className="whitespace-pre-wrap">{piece.imagePrompt}</p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={copyPrompt}
+                  className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white"
+                >
+                  {copied ? "Copiado!" : "Copiar prompt"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingPrompt(true)}
+                  className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+                >
+                  Editar
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <textarea
+                value={promptValue}
+                onChange={(e) => setPromptValue(e.target.value)}
+                rows={3}
+                className="w-full resize-none rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={savePrompt}
+                  disabled={savingPrompt || !promptDirty}
+                  className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  {savingPrompt ? "Salvando..." : "Salvar"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingPrompt(false);
+                    setPromptValue(piece.imagePrompt);
+                    setPromptError(null);
+                  }}
+                  disabled={savingPrompt}
+                  className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+                >
+                  Cancelar
+                </button>
+              </div>
+              {promptError && <p className="text-sm text-red-600">{promptError}</p>}
+            </div>
+          )}
 
           <div
             onDragOver={(e) => {
