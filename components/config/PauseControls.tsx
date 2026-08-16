@@ -2,15 +2,14 @@
 
 import { useState } from "react";
 
-const MANUAL_ROUND_URL = "https://claude.ai/code/routines/trig_017eaYQYsHyf9J2KFNZUpugd";
-
 interface SettingsPayload {
   generationPaused: boolean;
   publishingPaused: boolean;
+  generationIntervalWeeks: number;
 }
 
 interface ToggleConfig {
-  key: keyof SettingsPayload;
+  key: "generationPaused" | "publishingPaused";
   label: string;
   description: string;
 }
@@ -29,12 +28,21 @@ const TOGGLES: ToggleConfig[] = [
   },
 ];
 
+const FREQUENCY_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: "Semanal" },
+  { value: 2, label: "Quinzenal" },
+  { value: 3, label: "A cada 3 semanas" },
+  { value: 4, label: "Mensal (4 semanas)" },
+];
+
+type PendingKey = keyof SettingsPayload | null;
+
 export function PauseControls({ initialSettings }: { initialSettings: SettingsPayload }) {
   const [settings, setSettings] = useState<SettingsPayload>(initialSettings);
-  const [pendingKey, setPendingKey] = useState<keyof SettingsPayload | null>(null);
+  const [pendingKey, setPendingKey] = useState<PendingKey>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function toggle(key: keyof SettingsPayload) {
+  async function toggle(key: ToggleConfig["key"]) {
     const previous = settings;
     const nextValue = !settings[key];
 
@@ -56,10 +64,38 @@ export function PauseControls({ initialSettings }: { initialSettings: SettingsPa
         setError(body.error ?? "Não foi possível salvar a alteração.");
         return;
       }
-      setSettings(body as SettingsPayload);
+      setSettings((current) => ({ ...current, ...body }));
     } catch {
       setSettings(previous);
       setError("Falha de rede ao salvar a alteração.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
+  async function updateFrequency(weeks: number) {
+    const previous = settings;
+
+    setSettings({ ...settings, generationIntervalWeeks: weeks });
+    setPendingKey("generationIntervalWeeks");
+    setError(null);
+
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ generationIntervalWeeks: weeks }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setSettings(previous);
+        setError(body.error ?? "Não foi possível salvar a frequência.");
+        return;
+      }
+      setSettings((current) => ({ ...current, ...body }));
+    } catch {
+      setSettings(previous);
+      setError("Falha de rede ao salvar a frequência.");
     } finally {
       setPendingKey(null);
     }
@@ -104,21 +140,29 @@ export function PauseControls({ initialSettings }: { initialSettings: SettingsPa
         })}
       </div>
 
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-
-      <div className="mt-4 border-t border-zinc-100 pt-3">
-        <a
-          href={MANUAL_ROUND_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white"
+      <div className="mt-3 flex flex-col gap-1 rounded-md bg-zinc-50 p-3">
+        <label htmlFor="generation-interval-weeks" className="text-sm font-medium text-zinc-800">
+          Frequência de geração
+        </label>
+        <select
+          id="generation-interval-weeks"
+          value={settings.generationIntervalWeeks}
+          disabled={pendingKey === "generationIntervalWeeks"}
+          onChange={(e) => updateFrequency(Number(e.target.value))}
+          className="rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-800 disabled:opacity-50"
         >
-          Gerar rodada agora →
-        </a>
-        <p className="mt-1 text-xs text-zinc-500">
-          Abre a rotina no claude.ai — use o botão Executar agora.
+          {FREQUENCY_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-zinc-500">
+          A rotina acorda toda semana e decide, com base nisso, se a rodada está no prazo.
         </p>
       </div>
+
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </section>
   );
 }

@@ -1,6 +1,12 @@
 import type { NextRequest } from "next/server";
 import { requireSameOrigin } from "@/lib/auth";
-import { getSetting, setSetting } from "@/lib/settings";
+import {
+  DEFAULT_GENERATION_INTERVAL_WEEKS,
+  getSetting,
+  getSettingString,
+  setSetting,
+  setSettingString,
+} from "@/lib/settings";
 import { patchSettingsSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -8,18 +14,29 @@ export const dynamic = "force-dynamic";
 
 const GENERATION_KEY = "generationPaused";
 const PUBLISHING_KEY = "publishingPaused";
+const GENERATION_INTERVAL_KEY = "generationIntervalWeeks";
+const FORCE_NEXT_GENERATION_KEY = "forceNextGeneration";
 
 interface SettingsPayload {
   generationPaused: boolean;
   publishingPaused: boolean;
+  generationIntervalWeeks: number;
+  forceNextGeneration: boolean;
 }
 
 async function readSettings(): Promise<SettingsPayload> {
-  const [generationPaused, publishingPaused] = await Promise.all([
+  const [generationPaused, publishingPaused, generationIntervalWeeksRaw, forceNextGeneration] = await Promise.all([
     getSetting(GENERATION_KEY),
     getSetting(PUBLISHING_KEY),
+    getSettingString(GENERATION_INTERVAL_KEY, DEFAULT_GENERATION_INTERVAL_WEEKS),
+    getSetting(FORCE_NEXT_GENERATION_KEY),
   ]);
-  return { generationPaused, publishingPaused };
+  return {
+    generationPaused,
+    publishingPaused,
+    generationIntervalWeeks: Number(generationIntervalWeeksRaw),
+    forceNextGeneration,
+  };
 }
 
 // GET /api/settings
@@ -52,11 +69,17 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  const { generationPaused, publishingPaused } = parsed.data;
+  const { generationPaused, publishingPaused, generationIntervalWeeks, forceNextGeneration } = parsed.data;
 
   await Promise.all([
     generationPaused !== undefined ? setSetting(GENERATION_KEY, generationPaused) : Promise.resolve(),
     publishingPaused !== undefined ? setSetting(PUBLISHING_KEY, publishingPaused) : Promise.resolve(),
+    generationIntervalWeeks !== undefined
+      ? setSettingString(GENERATION_INTERVAL_KEY, String(generationIntervalWeeks))
+      : Promise.resolve(),
+    forceNextGeneration !== undefined
+      ? setSetting(FORCE_NEXT_GENERATION_KEY, forceNextGeneration)
+      : Promise.resolve(),
   ]);
 
   return Response.json(await readSettings());

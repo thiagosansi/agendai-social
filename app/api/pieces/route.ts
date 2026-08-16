@@ -3,6 +3,7 @@ import { PieceStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireGenerationToken } from "@/lib/auth";
 import { checkText, loadRules } from "@/lib/claim-check";
+import { setSetting } from "@/lib/settings";
 import { createPieceSchema } from "@/lib/validation";
 import { isoWeekRange, parseSince } from "@/lib/iso-week";
 
@@ -107,6 +108,11 @@ export async function POST(req: NextRequest) {
       claimCheckPassed: true,
     },
   });
+
+  // One-shot override consumed: whether or not this round was manually
+  // forced (Fila "Gerar rodada agora"), a successful generation always
+  // resets it so the next report/latest read goes back to computed due math.
+  await setSetting("forceNextGeneration", false);
 
   return Response.json({ piece }, { status: 201 });
 }

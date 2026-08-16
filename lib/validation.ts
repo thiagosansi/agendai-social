@@ -35,16 +35,20 @@ export type PatchPieceInput = z.infer<typeof patchPieceSchema>;
 export const ALLOWED_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
-// PATCH /api/settings — partial update of the pause/kill-switch flags in
-// AppSetting (lib/settings.ts). Both fields optional so the Config page can
-// toggle one switch at a time.
+// PATCH /api/settings — partial update of the pause/kill-switch flags and
+// generation cadence in AppSetting (lib/settings.ts). All fields optional so
+// the Config page can update one control at a time, and the Fila page's
+// "Gerar rodada agora" button can PATCH only forceNextGeneration.
 export const patchSettingsSchema = z
   .object({
     generationPaused: z.boolean().optional(),
     publishingPaused: z.boolean().optional(),
+    generationIntervalWeeks: z.number().int().min(1).max(4).optional(),
+    forceNextGeneration: z.boolean().optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
-    message: "at least one of generationPaused, publishingPaused must be provided",
+    message:
+      "at least one of generationPaused, publishingPaused, generationIntervalWeeks, forceNextGeneration must be provided",
   });
 
 export type PatchSettingsInput = z.infer<typeof patchSettingsSchema>;

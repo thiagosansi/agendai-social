@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { PieceCard, type PieceCardData } from "@/components/fila/PieceCard";
+import { ManualRoundButton } from "@/components/fila/ManualRoundButton";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,10 @@ export default async function FilaPage() {
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-4 sm:py-6">
-      <h1 className="text-xl font-semibold text-zinc-900">Fila</h1>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-xl font-semibold text-zinc-900">Fila</h1>
+        <ManualRoundButton />
+      </div>
 
       {items.length === 0 ? (
         <div className="rounded-lg border border-dashed border-zinc-300 p-6 text-center text-sm text-zinc-500">

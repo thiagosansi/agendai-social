@@ -1,4 +1,4 @@
-import { getSetting } from "@/lib/settings";
+import { DEFAULT_GENERATION_INTERVAL_WEEKS, getSetting, getSettingString } from "@/lib/settings";
 import { PauseControls } from "@/components/config/PauseControls";
 
 export const dynamic = "force-dynamic";
@@ -49,16 +49,23 @@ function tokenStatus(expiresAt: string | undefined): TokenStatus {
 
 export default async function ConfigPage() {
   const status = tokenStatus(process.env.META_TOKEN_EXPIRES_AT);
-  const [generationPaused, publishingPaused] = await Promise.all([
+  const [generationPaused, publishingPaused, generationIntervalWeeksRaw] = await Promise.all([
     getSetting("generationPaused"),
     getSetting("publishingPaused"),
+    getSettingString("generationIntervalWeeks", DEFAULT_GENERATION_INTERVAL_WEEKS),
   ]);
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-4 sm:py-6">
       <h1 className="text-xl font-semibold text-zinc-900">Configurações</h1>
 
-      <PauseControls initialSettings={{ generationPaused, publishingPaused }} />
+      <PauseControls
+        initialSettings={{
+          generationPaused,
+          publishingPaused,
+          generationIntervalWeeks: Number(generationIntervalWeeksRaw),
+        }}
+      />
 
       <section className={`rounded-lg border p-4 ${LEVEL_CLASSES[status.level]}`}>
         <h2 className="font-medium">Token do Instagram (Meta Graph API)</h2>

@@ -113,6 +113,12 @@ PORT=3030 pnpm dev     # one terminal
 pnpm report:fixture     # another — seeds, calls the endpoint, cleans up
 ```
 
+## Frequência de geração
+
+`generationIntervalWeeks` (Config → Controles → "Frequência de geração": Semanal/Quinzenal/A cada 3 semanas/Mensal, default weekly) controls how often a new content round should be generated, stored as an `AppSetting` string ("1".."4"). The generation routine's schedule stays weekly — it wakes up every week regardless — but `GET /api/report/latest` now also returns `generationIntervalWeeks` and a computed `generationDue: boolean`, and the routine aborts cheaply (no draft created, no Claude quota spent) when `generationDue` is `false`. `generationDue` is `true` when there's no `Piece` yet, or when the time since the most recently created `Piece` (any status) is at least `generationIntervalWeeks * 7 days - 12h` — the 12h grace keeps a slightly-late weekly run from being flagged as off-schedule. Longer intervals just mean most weekly wake-ups are cheap no-op aborts.
+
+The Fila page's "Gerar rodada agora" button bypasses this check: it PATCHes the one-shot `forceNextGeneration` flag to `true` before opening the routine, which forces `generationDue: true` on the next read regardless of the configured interval; the flag is automatically cleared back to `false` by `POST /api/pieces` the next time a piece is actually created, so it only forces a single round.
+
 ## Status
 
 This is the scaffold. The `Piece` Prisma model, the pieces API, the Instagram Graph API publish cron, and the insights cron + performance report are implemented.

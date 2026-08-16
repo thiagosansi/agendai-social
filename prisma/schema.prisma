@@ -76,9 +76,10 @@ model AccountSnapshot {
 }
 
 // Generic key/value settings row, read/written through lib/settings.ts.
-// Today only two keys exist ("generationPaused", "publishingPaused"), both
-// booleans stored as the string "true"/"false" — an absent row means
-// "false" (unpaused), so the kill switches default to off without a seed.
+// Boolean keys ("generationPaused", "publishingPaused", "forceNextGeneration")
+// are stored as the string "true"/"false" — an absent row means "false", so
+// the kill switches default to off without a seed. "generationIntervalWeeks"
+// is a plain string int ("1".."4"), defaulting to "1" (weekly) when absent.
 model AppSetting {
   key       String   @id
   value     String
