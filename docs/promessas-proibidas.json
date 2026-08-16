@@ -1,0 +1,192 @@
+{
+  "$schema": "referência interna — sem validação JSON Schema formal",
+  "_comment": "Lista machine-readable de promessas proibidas para conteúdo de Instagram do Agendaí. Derivada de docs/plano-home-massoterapia.md secao 5 (Promessas proibidas -> substitutas). Consumida por scripts/instagram-claim-check.mjs. Patterns sao regex (sem flags) escritos ja em minusculas e sem acentos, pois o script normaliza (NFD + strip combining marks + lowercase) tanto o texto quanto os patterns antes de compilar.",
+  "items": [
+    {
+      "id": "lembrete-automatico",
+      "label": "Lembrete automático 24h antes",
+      "why": "O cron de lembrete 24h foi desligado em producao (commit 1ce95d4, 2026-08-04). O codigo existe no repo mas nao roda — nenhum lembrete e enviado hoje.",
+      "patterns": [
+        "lembrete automatico",
+        "lembrete 24h",
+        "lembretes automaticos",
+        "notificacao automatica"
+      ],
+      "allow": [],
+      "substitute": "Confirmação instantânea na hora de marcar / sinal pago = compromisso real"
+    },
+    {
+      "id": "pix-pagamento-sinal",
+      "label": "Pix como meio de pagamento do sinal",
+      "why": "Pix na Stripe Brasil e invite-only e nao esta habilitado no produto — hoje so cartao para o sinal antecipado.",
+      "patterns": [
+        "sinal (por|via|no) pix",
+        "pix online",
+        "pagamento (por|via) pix",
+        "qr code pix"
+      ],
+      "allow": [
+        "dinheiro, pix ou cartao",
+        "dinheiro/pix/cartao"
+      ],
+      "substitute": "Sinal por cartão"
+    },
+    {
+      "id": "whatsapp-automatico",
+      "label": "WhatsApp automático / notificação proativa",
+      "why": "Nao existe integracao de WhatsApp automatizado no produto.",
+      "patterns": [
+        "whatsapp automatico",
+        "dispara .* automaticamente",
+        "mensagem automatica",
+        "notificacao (por|via) whatsapp"
+      ],
+      "allow": [],
+      "substitute": "Sem precisar responder WhatsApp o dia inteiro (dor resolvida pelo link, não por automação de WhatsApp)"
+    },
+    {
+      "id": "percentual-reducao-faltas",
+      "label": "Redução de faltas em percentual",
+      "why": "Nenhum dado interno mede reducao de faltas em percentual hoje.",
+      "patterns": [
+        "(reduz|menos|corta).*faltas.*\\d+ ?%",
+        "\\d+ ?% (menos|de) (faltas|no-show)"
+      ],
+      "allow": [],
+      "substitute": "Mecânica sem número: sinal pago reduz o incentivo a faltar sem avisar"
+    },
+    {
+      "id": "resultado-garantido",
+      "label": "\"Agenda cheia\" / resultado garantido",
+      "why": "O produto entrega mecânica (agendamento sem ligação), não resultado de negócio garantido.",
+      "patterns": [
+        "agenda cheia",
+        "agenda lotada",
+        "resultado garantido"
+      ],
+      "allow": [],
+      "substitute": "Falar de dor + mecânica: chega de parar a massagem para atender o telefone"
+    },
+    {
+      "id": "valor-perdido-mes",
+      "label": "\"R$ X perdidos por mês\" sem fonte",
+      "why": "Sem pesquisa/dado citavel — exposicao ao art. 37 do CDC (publicidade enganosa).",
+      "patterns": [
+        "perde .* r\\$ ?\\d"
+      ],
+      "allow": [],
+      "substitute": "Perda qualitativa: dinheiro que sai da agenda antes de entrar no caixa"
+    },
+    {
+      "id": "sem-taxa-isolado",
+      "label": "\"Sem nenhuma taxa\" / \"sem taxa\" isolado",
+      "why": "A taxa de processamento da Stripe existe e e do profissional — afirmar ausencia total de taxa e falso.",
+      "patterns": [
+        "sem nenhuma taxa",
+        "sem taxa"
+      ],
+      "allow": [
+        "sem taxa por agendamento",
+        "zero comissao do agendai"
+      ],
+      "substitute": "Sem taxa por agendamento / zero comissão do Agendaí"
+    },
+    {
+      "id": "email-confirmacao-beneficio-geral",
+      "label": "E-mail de confirmação como benefício geral",
+      "why": "canUseBookingConfirmationEmails (lib/plan-guard.ts) e exclusivo do plano Business pago, nem trial inclui.",
+      "patterns": [
+        "e-?mail de confirmacao"
+      ],
+      "allow": [
+        "business"
+      ],
+      "substitute": "Se mencionar, deixar explícito \"recurso do plano Business\" — ou omitir do conteúdo genérico"
+    },
+    {
+      "id": "cliente-preenche-anamnese",
+      "label": "Cliente preenche a própria anamnese",
+      "why": "A anamnese e preenchida pelo profissional; nao ha campo de anamnese no fluxo publico do cliente.",
+      "patterns": [
+        "cliente preenche .* anamnese",
+        "anamnese online pelo cliente"
+      ],
+      "allow": [],
+      "substitute": "Ficha sempre à mão antes do atendimento (do ponto de vista do profissional)"
+    },
+    {
+      "id": "cota-agendamentos-bloqueio",
+      "label": "Cota/limite de agendamentos como bloqueio",
+      "why": "canAddAppointment retorna true sempre — a quota de agendamentos esta desativada desde 2026-08-03. Nao ha bloqueio por cota hoje.",
+      "patterns": [
+        "\\d+ agendamentos (por|/) ?mes"
+      ],
+      "allow": [],
+      "substitute": "Não mencionar limite de agendamentos por mês"
+    },
+    {
+      "id": "trial-unidade-adicional",
+      "label": "Trial de 30 dias grátis em unidade adicional",
+      "why": "O trial de 30 dias sem cartão vale apenas para o primeiro estabelecimento; unidades adicionais não têm trial próprio.",
+      "patterns": [
+        "30 dias gratis.*(segunda unidade|nova unidade|multi-?unidade|estabelecimento adicional)",
+        "(segunda unidade|nova unidade|multi-?unidade|estabelecimento adicional).*30 dias gratis"
+      ],
+      "allow": [],
+      "substitute": "30 dias grátis, sem cartão — válido apenas para o primeiro estabelecimento"
+    },
+    {
+      "id": "google-calendar-sync",
+      "label": "Integração/sincronização com Google Calendar",
+      "why": "Não existe integração ou sincronização com Google Calendar no produto.",
+      "patterns": [
+        "sincroniza .* google calendar",
+        "integracao .* google calendar"
+      ],
+      "allow": [],
+      "substitute": "Não mencionar Google Calendar"
+    },
+    {
+      "id": "reserve-with-google-instagram-button",
+      "label": "Reserve with Google / botão de reservar do Instagram",
+      "why": "Não existe integração com Reserve with Google nem botão nativo de reserva do Instagram.",
+      "patterns": [
+        "reserve with google",
+        "botao reservar do instagram"
+      ],
+      "allow": [],
+      "substitute": "Link de agendamento (agendai.space/seu-negocio) na bio"
+    },
+    {
+      "id": "lista-de-espera",
+      "label": "Lista de espera",
+      "why": "Não existe feature de lista de espera no produto.",
+      "patterns": [
+        "lista de espera"
+      ],
+      "allow": [],
+      "substitute": "Não mencionar lista de espera"
+    },
+    {
+      "id": "cupom-desconto",
+      "label": "Cupom de desconto",
+      "why": "Não existe sistema de cupom de desconto no produto.",
+      "patterns": [
+        "cupom de desconto"
+      ],
+      "allow": [],
+      "substitute": "Não mencionar cupom de desconto"
+    },
+    {
+      "id": "app-nativo",
+      "label": "App nativo (App Store / Play Store)",
+      "why": "O Agendaí é um PWA, não existe app nativo publicado em loja de aplicativos.",
+      "patterns": [
+        "app na (app store|play store)",
+        "baixe o app"
+      ],
+      "allow": [],
+      "substitute": "PWA: adicione à tela de início direto pelo navegador"
+    }
+  ]
+}
