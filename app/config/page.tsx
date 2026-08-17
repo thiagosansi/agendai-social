@@ -2,6 +2,7 @@ import { DEFAULT_GENERATION_INTERVAL_WEEKS, getMarketConfig, getSetting, getSett
 import { PauseControls } from "@/components/config/PauseControls";
 import { NotificationControls } from "@/components/config/NotificationControls";
 import { MarketControls } from "@/components/config/MarketControls";
+import { tokenStatus, type TokenLevel } from "@/lib/meta-token";
 
 export const dynamic = "force-dynamic";
 
@@ -16,42 +17,11 @@ const REQUIRED_ENVS = [
   { key: "VAPID_SUBJECT", label: "Contato das notificações push (mailto:...)" },
 ] as const;
 
-type TokenLevel = "green" | "amber" | "red";
-
-interface TokenStatus {
-  level: TokenLevel;
-  message: string;
-}
-
 const LEVEL_CLASSES: Record<TokenLevel, string> = {
   green: "border-green-300 bg-green-50 text-green-800",
   amber: "border-amber-300 bg-amber-50 text-amber-800",
   red: "border-red-300 bg-red-50 text-red-800",
 };
-
-function tokenStatus(expiresAt: string | undefined): TokenStatus {
-  if (!expiresAt) {
-    return { level: "red", message: "META_TOKEN_EXPIRES_AT não configurada." };
-  }
-
-  const expires = new Date(expiresAt);
-  if (Number.isNaN(expires.getTime())) {
-    return { level: "red", message: "META_TOKEN_EXPIRES_AT tem um valor inválido." };
-  }
-
-  const daysLeft = Math.ceil((expires.getTime() - Date.now()) / 86_400_000);
-
-  if (daysLeft < 0) {
-    return { level: "red", message: `Token expirado há ${Math.abs(daysLeft)} dia(s).` };
-  }
-  if (daysLeft === 0) {
-    return { level: "red", message: "Token expira hoje." };
-  }
-  if (daysLeft <= 10) {
-    return { level: "amber", message: `Expira em ${daysLeft} dia(s).` };
-  }
-  return { level: "green", message: `Expira em ${daysLeft} dia(s).` };
-}
 
 export default async function ConfigPage() {
   const status = tokenStatus(process.env.META_TOKEN_EXPIRES_AT);
