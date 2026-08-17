@@ -31,13 +31,14 @@ function isActive(pathname: string, href: string): boolean {
 
 interface NavListProps {
   pathname: string;
+  items: readonly (typeof NAV_ITEMS)[number][];
   onNavigate?: () => void;
 }
 
-function NavList({ pathname, onNavigate }: NavListProps) {
+function NavList({ pathname, items, onNavigate }: NavListProps) {
   return (
     <nav className="flex flex-col gap-1 px-3">
-      {NAV_ITEMS.map((item) => {
+      {items.map((item) => {
         const active = isActive(pathname, item.href);
         const Icon = item.icon;
         return (
@@ -61,6 +62,10 @@ function NavList({ pathname, onNavigate }: NavListProps) {
 
 interface AppShellProps {
   children: React.ReactNode;
+  // The authenticated session's role, or null when unauthenticated (e.g.
+  // /login). Viewers see every nav item except Config — they have no write
+  // access to it (app/config/page.tsx redirects them away regardless).
+  role: "owner" | "viewer" | null;
 }
 
 /**
@@ -75,10 +80,12 @@ interface AppShellProps {
  * state via a native `addEventListener("close", ...)` — the React `onClose`
  * prop does not fire reliably here, so it is not used.
  */
-export function AppShell({ children }: AppShellProps) {
+export function AppShell({ children, role }: AppShellProps) {
   const pathname = usePathname();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
+
+  const navItems = role === "viewer" ? NAV_ITEMS.filter((item) => item.href !== "/config") : NAV_ITEMS;
 
   // /login is reachable without a session (that's its whole point), so it
   // must not leak the app's nav — render it standalone, no sidebar/drawer.
@@ -133,7 +140,7 @@ export function AppShell({ children }: AppShellProps) {
         <div className="px-4 py-4">
           <span className="text-sm font-semibold text-zinc-900">Agendaí Social Studio</span>
         </div>
-        <NavList pathname={pathname} />
+        <NavList pathname={pathname} items={navItems} />
       </aside>
 
       <div className="min-w-0 flex-1">
@@ -182,7 +189,7 @@ export function AppShell({ children }: AppShellProps) {
                 <X size={ICON_SIZE} aria-hidden="true" />
               </button>
             </div>
-            <NavList pathname={pathname} onNavigate={() => setOpen(false)} />
+            <NavList pathname={pathname} items={navItems} onNavigate={() => setOpen(false)} />
           </div>
         </dialog>
 

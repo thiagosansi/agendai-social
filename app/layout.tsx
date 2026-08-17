@@ -1,6 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
+import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/session-server";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -35,14 +38,35 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+// Viewer sessions are re-validated against the DB on every request (unlike
+// the owner path, which trusts the signed cookie alone) — a viewer's
+// account can be deactivated or deleted from /config at any time, and the
+// signed cookie has no way to reflect that without re-issuing it. A server
+// component can't clear a cookie itself, so a stale viewer is routed
+// through GET /api/auth/logout (app/api/auth/logout/route.ts), which clears
+// the cookie and *then* redirects to /login — redirecting straight to
+// /login here instead would leave the stale cookie in place and loop
+// forever, since this layout (and its DB check) also wraps /login.
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  const session = await getSession();
+
+  if (session?.role === "viewer") {
+    const viewer = await prisma.viewerUser.findUnique({
+      where: { username: session.username },
+      select: { active: true },
+    });
+    if (!viewer || !viewer.active) {
+      redirect("/api/auth/logout?next=%2Flogin");
+    }
+  }
+
   return (
     <html
       lang="pt-BR"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-zinc-50 text-zinc-900">
-        <AppShell>{children}</AppShell>
+        <AppShell role={session?.role ?? null}>{children}</AppShell>
       </body>
     </html>
   );

@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { requireOwner } from "@/lib/session";
 import { orderedImagesInclude } from "@/lib/piece-images";
 import { reorderImagesSchema } from "@/lib/validation";
 
@@ -13,10 +14,12 @@ export const runtime = "nodejs";
 // any payload that isn't exactly the same id set the piece currently has
 // (no partial reorders, no smuggling in another piece's image id). Only
 // allowed while status=draft — same freeze-after-approval rule as
-// POST/DELETE .../image. Not gated by the generation token or same-origin
-// check — consistent with every other piece-mutation route in this app
-// (see lib/auth.ts for why the approval UI's routes stay ungated for now).
+// POST/DELETE .../image. Owner-only (lib/session.ts requireOwner) — this
+// route was previously unauthenticated.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const authError = await requireOwner(req);
+  if (authError) return authError;
+
   const { id } = await params;
 
   const existing = await prisma.piece.findUnique({ where: { id }, include: orderedImagesInclude });

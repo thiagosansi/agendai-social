@@ -115,6 +115,46 @@ export const patchSettingsSchema = z
 
 export type PatchSettingsInput = z.infer<typeof patchSettingsSchema>;
 
+// Viewer usernames: lowercase letters, digits, periods and underscores,
+// 3-30 chars. "admin" is reserved for the owner (lib/session.ts's
+// OWNER_USERNAME) and rejected here so a viewer row can never collide with
+// the owner's identity.
+export const usernameSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9._]{3,30}$/, "username inválido")
+  .refine((username) => username !== "admin", "username reservado");
+
+export const viewerPasswordSchema = z.string().min(8).max(200);
+
+// POST /api/auth/login — accepts both the owner (username "admin") and
+// viewer credentials; usernameSchema's stricter shape/length is enforced
+// separately at viewer-creation time (createViewerUserSchema below), not
+// here, since "admin" itself must be allowed through this schema.
+export const loginSchema = z.object({
+  username: z.string().trim().toLowerCase().min(1, "username is required"),
+  password: z.string().min(1, "password is required"),
+});
+
+export type LoginInput = z.infer<typeof loginSchema>;
+
+// POST /api/viewer-users — creates a new read-only ViewerUser (managed on
+// /config by the owner).
+export const createViewerUserSchema = z.object({
+  username: usernameSchema,
+  password: viewerPasswordSchema,
+});
+
+export type CreateViewerUserInput = z.infer<typeof createViewerUserSchema>;
+
+// PATCH /api/viewer-users/[id] — toggles a ViewerUser's active flag.
+export const patchViewerUserSchema = z.object({
+  active: z.boolean(),
+});
+
+export type PatchViewerUserInput = z.infer<typeof patchViewerUserSchema>;
+
 // POST /api/push/subscribe — the shape a browser's PushSubscription
 // serialises to (`JSON.parse(JSON.stringify(subscription))`). Only the fields
 // we persist are declared; `expirationTime` and friends are ignored.

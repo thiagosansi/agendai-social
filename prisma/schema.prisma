@@ -157,6 +157,24 @@ model AppSetting {
   updatedAt DateTime @updatedAt
 }
 
+// A read-only viewer account, managed on /config by the owner. The owner
+// itself is NOT a row here — it authenticates as username "admin" directly
+// against APP_PASSWORD (see lib/session.ts), since this is fundamentally a
+// single-owner tool (middleware.ts) that gained a secondary, restricted
+// read-only role. `passwordHash` is produced by lib/passwords.ts (scrypt,
+// Node-only). `active` is a soft-disable switch — deactivating a viewer
+// (rather than deleting the row) keeps the account's history/audit trail
+// while immediately blocking new logins and forcing out any existing
+// session (app/layout.tsx re-checks `active` on every request).
+model ViewerUser {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 // One row per market scan run (GET /api/analysis/market) — an app-mediated
 // Instagram Business Discovery + hashtag-search snapshot for the
 // competitors/hashtags configured on /config, since the (cloud-scheduled)

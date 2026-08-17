@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSameOrigin } from "@/lib/auth";
+import { requireOwner } from "@/lib/session";
 import { getVapidPublicKey, isPushConfigured } from "@/lib/push";
 import { pushSubscriptionSchema } from "@/lib/validation";
 
@@ -27,12 +28,15 @@ export async function GET() {
 // POST /api/push/subscribe
 // Registers (or refreshes) one device's push subscription.
 //
-// Same-origin only, matching PATCH /api/settings: the Config page calls this
-// with a plain browser fetch and has no bearer token to offer. See
-// lib/auth.ts requireSameOrigin for the reasoning.
+// Same-origin (see lib/auth.ts requireSameOrigin) plus owner-only
+// (lib/session.ts requireOwner) — this route was previously reachable by
+// any same-origin caller, including a logged-in viewer.
 export async function POST(req: NextRequest) {
   const authError = requireSameOrigin(req);
   if (authError) return authError;
+
+  const ownerError = await requireOwner(req);
+  if (ownerError) return ownerError;
 
   if (!isPushConfigured()) {
     return Response.json(

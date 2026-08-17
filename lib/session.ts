@@ -1,20 +1,59 @@
+import type { NextRequest } from "next/server";
+
 // Cookie-session helpers for the approval web UI, edge-safe (Web Crypto
 // only — no Node `crypto`, since middleware.ts runs on the edge runtime).
 //
-// The session token is not a random, server-stored value — it is a
-// timestamped HMAC keyed by APP_PASSWORD itself: `${expiresAt}.${hex(HMAC)}`.
-// That means there is no session store to manage: any request presenting a
+// v2 adds a `role` (owner | viewer) and `username` to the token so the
+// same cookie can represent either the single owner (username "admin",
+// authenticated against APP_PASSWORD) or a read-only ViewerUser row
+// (prisma/schema.prisma, authenticated against a scrypt hash — see
+// lib/passwords.ts). The token is still not a random, server-stored value —
+// it is a timestamped HMAC keyed by APP_PASSWORD itself:
+// `${exp}.${role}.${username}.${hex(HMAC)}`. That means there is still no
+// session store to manage for the owner path: any request presenting a
 // token that (a) has not expired and (b) recomputes to the same HMAC is
 // trusted. Rotating APP_PASSWORD invalidates every existing session
 // immediately (the HMAC key changed, so old tokens stop verifying), and the
 // embedded expiry bounds how long a leaked token stays valid even without a
-// rotation. This mirrors the single-owner, no-session-store posture already
-// used by Basic Auth in middleware.ts.
+// rotation.
+//
+// Viewer accountability (has this ViewerUser been deactivated/deleted since
+// the cookie was issued?) is NOT encoded in the token — that would require
+// re-signing on every admin action. Instead app/layout.tsx re-checks
+// `active` against the DB on every request for viewer sessions (Node
+// runtime, not middleware) and clears the cookie via GET /api/auth/logout
+// if the account is gone/inactive.
+//
+// v1 tokens (`${exp}.${hex(HMAC)}`, no role/username) fail to parse here
+// (wrong part count) and verify as `null` — every v1 session is treated as
+// unauthenticated, forcing a fresh login.
 
 export const SESSION_COOKIE = "app_session";
-export const SESSION_MAX_AGE_SECONDS = 180 * 24 * 60 * 60; // ~180 days
 
-const SESSION_MESSAGE_PREFIX = "agendai-social-session-v1:";
+export const OWNER_USERNAME = "admin";
+
+export const OWNER_SESSION_MAX_AGE_SECONDS = 180 * 24 * 60 * 60; // ~180 days
+export const VIEWER_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // ~30 days
+
+const SESSION_MESSAGE_PREFIX = "agendai-social-session-v2:";
+
+export type SessionRole = "owner" | "viewer";
+
+export interface Session {
+  role: SessionRole;
+  username: string;
+  expiresAt: number;
+}
+
+// Same shape as lib/validation.ts's usernameSchema regex, duplicated here
+// (rather than imported) so this file stays edge-safe and dependency-free —
+// lib/validation.ts pulls in zod, which is fine on Node but adds weight to
+// the middleware bundle unnecessarily.
+const VIEWER_USERNAME_PATTERN = /^[a-z0-9._]{3,30}$/;
+
+function maxAgeForRole(role: SessionRole): number {
+  return role === "owner" ? OWNER_SESSION_MAX_AGE_SECONDS : VIEWER_SESSION_MAX_AGE_SECONDS;
+}
 
 async function hmacKey(password: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
@@ -32,22 +71,35 @@ function toHex(buffer: ArrayBuffer): string {
     .join("");
 }
 
-async function signExpiry(password: string, expiresAtEpochSeconds: number): Promise<string> {
+async function signPayload(
+  password: string,
+  expiresAtEpochSeconds: number,
+  role: SessionRole,
+  username: string,
+): Promise<string> {
   const key = await hmacKey(password);
-  const message = `${SESSION_MESSAGE_PREFIX}${expiresAtEpochSeconds}`;
+  const message = `${SESSION_MESSAGE_PREFIX}${expiresAtEpochSeconds}:${role}:${username}`;
   const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
   return toHex(signature);
 }
 
-// Produces the session token for the given password: `${expiresAt}.${hex(
-// HMAC-SHA256(key = password, message = "agendai-social-session-v1:" +
-// expiresAt))}`, with expiresAt = now + SESSION_MAX_AGE_SECONDS. Embedding
-// the expiry in the signed message (rather than trusting an unsigned
-// prefix) means it can't be tampered with independently of the signature.
-export async function createSessionToken(password: string): Promise<string> {
-  const expiresAtEpochSeconds = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS;
-  const signature = await signExpiry(password, expiresAtEpochSeconds);
-  return `${expiresAtEpochSeconds}.${signature}`;
+// Produces a v2 session token: `${exp}.${role}.${username}.${hex(HMAC-SHA256(
+// key = password, message = "agendai-social-session-v2:" + exp + ":" + role +
+// ":" + username))}`, with exp = now + maxAge for the given role. The owner
+// path is always authenticated against APP_PASSWORD (the `password` param);
+// the viewer path is authenticated against the ViewerUser's own scrypt hash
+// beforehand (see app/api/auth/login/route.ts) but the token itself is still
+// signed with APP_PASSWORD as the HMAC key, same as the owner path — that's
+// what lets rotating APP_PASSWORD invalidate every outstanding session,
+// owner and viewer alike, without touching the ViewerUser table.
+export async function createSessionToken(
+  password: string,
+  role: SessionRole,
+  username: string,
+): Promise<string> {
+  const expiresAtEpochSeconds = Math.floor(Date.now() / 1000) + maxAgeForRole(role);
+  const signature = await signPayload(password, expiresAtEpochSeconds, role, username);
+  return `${expiresAtEpochSeconds}.${role}.${username}.${signature}`;
 }
 
 // Constant-time string comparison — compares lengths first (a length
@@ -62,29 +114,40 @@ export function constantTimeEqual(a: string, b: string): boolean {
   return mismatch === 0;
 }
 
-// Parses the `${expiresAt}.${signature}` token, rejects it outright if the
-// expiry isn't a valid integer or is already in the past, then recomputes
-// the HMAC for that exact expiry and compares it against the supplied
-// signature in constant time.
+// Parses the `${exp}.${role}.${username}.${signature}` token (exactly 4
+// dot-separated parts — a v1 token has 2 and is rejected outright), rejects
+// it if the expiry isn't a valid integer or is already in the past, if the
+// role isn't a known SessionRole, or if the username fails the same shape
+// check enforced at signup/login time, then recomputes the HMAC for that
+// exact payload and compares it against the supplied signature in constant
+// time.
 export async function verifySessionToken(
   token: string | undefined,
   password: string,
-): Promise<boolean> {
-  if (!token) return false;
+): Promise<Session | null> {
+  if (!token) return null;
 
-  const separatorIndex = token.indexOf(".");
-  if (separatorIndex < 0) return false;
+  const parts = token.split(".");
+  if (parts.length !== 4) return null;
 
-  const expiresAtRaw = token.slice(0, separatorIndex);
-  const signature = token.slice(separatorIndex + 1);
+  const [expiresAtRaw, roleRaw, username, signature] = parts;
 
-  if (!/^\d+$/.test(expiresAtRaw)) return false;
+  if (!/^\d+$/.test(expiresAtRaw)) return null;
   const expiresAtEpochSeconds = Number(expiresAtRaw);
-  if (!Number.isSafeInteger(expiresAtEpochSeconds)) return false;
-  if (expiresAtEpochSeconds < Math.floor(Date.now() / 1000)) return false;
+  if (!Number.isSafeInteger(expiresAtEpochSeconds)) return null;
+  if (expiresAtEpochSeconds < Math.floor(Date.now() / 1000)) return null;
 
-  const expected = await signExpiry(password, expiresAtEpochSeconds);
-  return constantTimeEqual(signature, expected);
+  if (roleRaw !== "owner" && roleRaw !== "viewer") return null;
+  const role: SessionRole = roleRaw;
+
+  const usernameIsValid =
+    username === OWNER_USERNAME || VIEWER_USERNAME_PATTERN.test(username);
+  if (!usernameIsValid) return null;
+
+  const expected = await signPayload(password, expiresAtEpochSeconds, role, username);
+  if (!constantTimeEqual(signature, expected)) return null;
+
+  return { role, username, expiresAt: expiresAtEpochSeconds };
 }
 
 export interface SessionCookieOptions {
@@ -97,12 +160,44 @@ export interface SessionCookieOptions {
 
 // Shared cookie attributes for both setting and clearing the session
 // cookie. `secure` is gated on NODE_ENV so local dev over http still works.
-export function sessionCookieOptions(): SessionCookieOptions {
+export function sessionCookieOptions(role: SessionRole): SessionCookieOptions {
   return {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: SESSION_MAX_AGE_SECONDS,
+    maxAge: maxAgeForRole(role),
   };
+}
+
+// Reads and verifies the session cookie off a NextRequest — the
+// middleware-safe entry point (edge runtime, no next/headers). Server
+// components needing the session should use getSession() in
+// lib/session-server.ts instead, which reads from next/headers' cookies().
+export async function getSessionFromRequest(req: NextRequest): Promise<Session | null> {
+  const expectedPassword = process.env.APP_PASSWORD;
+  if (!expectedPassword) return null;
+
+  const token = req.cookies.get(SESSION_COOKIE)?.value;
+  return verifySessionToken(token, expectedPassword);
+}
+
+// Owner-only route guard for API routes (Node runtime). Returns a Response
+// to short-circuit the caller when access must be denied, or null when the
+// request is an authenticated owner and should proceed:
+//   - no/invalid session -> 401 { error: "unauthorized" }
+//   - viewer session      -> 403 { error: "somente leitura" }
+//   - owner session        -> null (proceed)
+export async function requireOwner(req: NextRequest): Promise<Response | null> {
+  const session = await getSessionFromRequest(req);
+
+  if (!session) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  if (session.role !== "owner") {
+    return Response.json({ error: "somente leitura" }, { status: 403 });
+  }
+
+  return null;
 }

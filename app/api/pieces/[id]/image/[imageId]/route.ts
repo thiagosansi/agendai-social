@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { requireOwner } from "@/lib/session";
 import { orderedImagesInclude } from "@/lib/piece-images";
 import { deleteLocalUploadFile } from "@/lib/uploads";
 
@@ -10,11 +11,15 @@ export const runtime = "nodejs";
 // Removes one image from a draft piece (and its local file, if it was a
 // /uploads/... upload), then resequences the remaining images' sortOrder to
 // stay 0-based and contiguous. Only allowed while status=draft — see
-// POST .../image for the same freeze-after-approval rule.
+// POST .../image for the same freeze-after-approval rule. Owner-only
+// (lib/session.ts requireOwner) — this route was previously unauthenticated.
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; imageId: string }> },
 ) {
+  const authError = await requireOwner(req);
+  if (authError) return authError;
+
   const { id, imageId } = await params;
 
   const existing = await prisma.piece.findUnique({ where: { id }, include: orderedImagesInclude });

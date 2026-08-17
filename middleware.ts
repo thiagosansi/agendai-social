@@ -38,7 +38,8 @@ export async function middleware(req: NextRequest) {
   }
 
   const sessionToken = req.cookies.get(SESSION_COOKIE)?.value;
-  if (await verifySessionToken(sessionToken, expectedPassword)) {
+  const session = await verifySessionToken(sessionToken, expectedPassword);
+  if (session) {
     return NextResponse.next();
   }
 

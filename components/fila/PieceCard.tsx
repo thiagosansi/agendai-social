@@ -36,12 +36,18 @@ const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_CARROSSEL_IMAGES = 10;
 const MIN_CARROSSEL_IMAGES_TO_APPROVE = 2;
 
-export function PieceCard({ piece }: { piece: PieceCardData }) {
+// `readOnly` mirrors the viewer role (session.role === "viewer",
+// app/fila/page.tsx): all editing/mutation affordances (caption/prompt
+// editing, approve/disapprove, image upload/remove/reorder) are hidden,
+// while thumbnails, the lightbox, captions and the prompt stay visible as
+// plain text. Hooks below stay unconditional (rules of hooks) — only the
+// JSX branches on `readOnly`.
+export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; readOnly?: boolean }) {
   const router = useRouter();
 
   const isCarrossel = piece.format === "carrossel";
   const isDraft = piece.status === "draft";
-  const canMutateImages = isDraft;
+  const canMutateImages = isDraft && !readOnly;
 
   const [captionValue, setCaptionValue] = useState(piece.caption);
   // Tracks the last caption we've synced from props, so we can reset the
@@ -277,13 +283,15 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
         >
           {copied ? "Copiado!" : "Copiar prompt"}
         </button>
-        <button
-          type="button"
-          onClick={() => setEditingPrompt(true)}
-          className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
-        >
-          Editar
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            onClick={() => setEditingPrompt(true)}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+          >
+            Editar
+          </button>
+        )}
       </div>
     </>
   ) : (
@@ -451,7 +459,7 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
           </div>
         )}
 
-        {!canMutateImages && piece.images.length > 0 && (
+        {!canMutateImages && !readOnly && piece.images.length > 0 && (
           <p className="text-xs text-zinc-400">Imagens congeladas após aprovação.</p>
         )}
 
@@ -470,13 +478,15 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
               >
                 {copied ? "Copiado!" : "Copiar prompt"}
               </button>
-              <button
-                type="button"
-                onClick={() => setEditingPrompt(true)}
-                className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
-              >
-                Editar
-              </button>
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={() => setEditingPrompt(true)}
+                  className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+                >
+                  Editar
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -530,76 +540,97 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
       </div>
 
       <div className="flex flex-col gap-1">
-        <label htmlFor={`caption-${piece.id}`} className="text-xs font-medium text-zinc-500">
-          Legenda
-        </label>
-        <textarea
-          id={`caption-${piece.id}`}
-          value={captionValue}
-          onChange={(e) => setCaptionValue(e.target.value)}
-          rows={4}
-          className="w-full resize-none rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
-        />
-        {captionDirty && (
-          <button
-            type="button"
-            onClick={saveCaption}
-            disabled={savingCaption}
-            className="self-start rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-          >
-            {savingCaption ? "Salvando..." : "Salvar legenda"}
-          </button>
-        )}
-        {captionError && (
-          <div className="rounded-md border border-red-300 bg-red-50 p-2 text-sm text-red-700">
-            <p className="font-medium">{captionError}</p>
-            {captionViolations.length > 0 && (
-              <ul className="mt-1 list-inside list-disc">
-                {captionViolations.map((v) => (
-                  <li key={v.id}>
-                    <span className="font-medium">{v.label}</span> em &ldquo;{v.snippet}&rdquo; — sugestão: {v.substitute}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-100 pt-3">
-        {piece.status === "approved" ? (
+        {readOnly ? (
           <>
-            <span className="text-sm text-zinc-600">{publishCountdown(piece.publishAt)}</span>
-            <button
-              type="button"
-              onClick={() => setStatus("draft")}
-              disabled={approving}
-              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 disabled:opacity-50"
-            >
-              {approving ? "Aguarde..." : "Desaprovar"}
-            </button>
+            <span className="text-xs font-medium text-zinc-500">Legenda</span>
+            <p className="whitespace-pre-wrap rounded-md border border-zinc-200 bg-zinc-50 p-2 text-sm text-zinc-900">
+              {piece.caption}
+            </p>
           </>
         ) : (
           <>
-            <span className="text-xs text-zinc-400">
-              {canApprove
-                ? "Pronto para aprovar"
-                : piece.images.length === 0
-                  ? "Envie uma imagem para aprovar"
-                  : `Envie mais ${MIN_CARROSSEL_IMAGES_TO_APPROVE - piece.images.length} imagem(ns) para aprovar`}
-            </span>
-            <button
-              type="button"
-              onClick={() => setStatus("approved")}
-              disabled={!canApprove || approving}
-              className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {approving ? "Aprovando..." : "Aprovar"}
-            </button>
+            <label htmlFor={`caption-${piece.id}`} className="text-xs font-medium text-zinc-500">
+              Legenda
+            </label>
+            <textarea
+              id={`caption-${piece.id}`}
+              value={captionValue}
+              onChange={(e) => setCaptionValue(e.target.value)}
+              rows={4}
+              className="w-full resize-none rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
+            />
+            {captionDirty && (
+              <button
+                type="button"
+                onClick={saveCaption}
+                disabled={savingCaption}
+                className="self-start rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {savingCaption ? "Salvando..." : "Salvar legenda"}
+              </button>
+            )}
+            {captionError && (
+              <div className="rounded-md border border-red-300 bg-red-50 p-2 text-sm text-red-700">
+                <p className="font-medium">{captionError}</p>
+                {captionViolations.length > 0 && (
+                  <ul className="mt-1 list-inside list-disc">
+                    {captionViolations.map((v) => (
+                      <li key={v.id}>
+                        <span className="font-medium">{v.label}</span> em &ldquo;{v.snippet}&rdquo; — sugestão: {v.substitute}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
-      {approveError && <p className="text-sm text-red-600">{approveError}</p>}
+
+      {readOnly ? (
+        piece.status === "approved" && (
+          <p className="border-t border-zinc-100 pt-3 text-sm text-zinc-600">
+            {publishCountdown(piece.publishAt)}
+          </p>
+        )
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-100 pt-3">
+            {piece.status === "approved" ? (
+              <>
+                <span className="text-sm text-zinc-600">{publishCountdown(piece.publishAt)}</span>
+                <button
+                  type="button"
+                  onClick={() => setStatus("draft")}
+                  disabled={approving}
+                  className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 disabled:opacity-50"
+                >
+                  {approving ? "Aguarde..." : "Desaprovar"}
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="text-xs text-zinc-400">
+                  {canApprove
+                    ? "Pronto para aprovar"
+                    : piece.images.length === 0
+                      ? "Envie uma imagem para aprovar"
+                      : `Envie mais ${MIN_CARROSSEL_IMAGES_TO_APPROVE - piece.images.length} imagem(ns) para aprovar`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setStatus("approved")}
+                  disabled={!canApprove || approving}
+                  className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {approving ? "Aprovando..." : "Aprovar"}
+                </button>
+              </>
+            )}
+          </div>
+          {approveError && <p className="text-sm text-red-600">{approveError}</p>}
+        </>
+      )}
 
       <ImageLightbox
         images={piece.images}

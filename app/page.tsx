@@ -5,6 +5,7 @@ import { DEFAULT_GENERATION_INTERVAL_WEEKS, getSetting, getSettingString } from 
 import { computeGenerationDue } from "@/lib/generation-schedule";
 import { tokenStatus } from "@/lib/meta-token";
 import { formatDateSP } from "@/lib/format";
+import { getSession } from "@/lib/session-server";
 import {
   parseContentProposals,
   parseRecommendations,
@@ -45,6 +46,9 @@ function excerptSummary(markdown: string, maxChars = 280): string {
 }
 
 export default async function Home() {
+  const session = await getSession();
+  const isViewer = session?.role === "viewer";
+
   const now = new Date();
   const in7Days = new Date(now.getTime() + SEVEN_DAYS_MS);
 
@@ -113,8 +117,7 @@ export default async function Home() {
     alerts.push({
       level: meta.level,
       message: `Token do Instagram: ${meta.message}`,
-      href: "/config",
-      linkLabel: "Configurações",
+      ...(!isViewer && { href: "/config", linkLabel: "Configurações" }),
     });
   }
 
@@ -123,8 +126,7 @@ export default async function Home() {
     alerts.push({
       level: "amber",
       message: "Notificações push não configuradas (VAPID ausente).",
-      href: "/config",
-      linkLabel: "Configurações",
+      ...(!isViewer && { href: "/config", linkLabel: "Configurações" }),
     });
   }
 
@@ -142,8 +144,7 @@ export default async function Home() {
     alerts.push({
       level: "info",
       message: "Geração de conteúdo está pausada.",
-      href: "/config",
-      linkLabel: "Configurações",
+      ...(!isViewer && { href: "/config", linkLabel: "Configurações" }),
     });
   }
 
@@ -151,8 +152,7 @@ export default async function Home() {
     alerts.push({
       level: "info",
       message: "Publicação está pausada.",
-      href: "/config",
-      linkLabel: "Configurações",
+      ...(!isViewer && { href: "/config", linkLabel: "Configurações" }),
     });
   }
 
@@ -249,7 +249,7 @@ export default async function Home() {
           )}
         </SectionCard>
 
-        <SectionCard title="Rotinas" href="/config" linkLabel="Configurações →">
+        <SectionCard title="Rotinas" {...(!isViewer && { href: "/config", linkLabel: "Configurações →" })}>
           <ul className="flex flex-col gap-3 text-sm">
             <li className="rounded-md bg-zinc-50 p-3">
               <div className="flex items-center justify-between gap-2">

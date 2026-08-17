@@ -1,9 +1,13 @@
+import { redirect } from "next/navigation";
 import { DEFAULT_GENERATION_INTERVAL_WEEKS, getMarketConfig, getSetting, getSettingString } from "@/lib/settings";
 import { PauseControls } from "@/components/config/PauseControls";
 import { NotificationControls } from "@/components/config/NotificationControls";
 import { MarketControls } from "@/components/config/MarketControls";
+import { ViewersControls } from "@/components/config/ViewersControls";
 import { LogoutButton } from "@/components/config/LogoutButton";
 import { tokenStatus, type TokenLevel } from "@/lib/meta-token";
+import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/session-server";
 
 export const dynamic = "force-dynamic";
 
@@ -25,13 +29,22 @@ const LEVEL_CLASSES: Record<TokenLevel, string> = {
 };
 
 export default async function ConfigPage() {
+  const session = await getSession();
+  if (session?.role === "viewer") redirect("/");
+
   const status = tokenStatus(process.env.META_TOKEN_EXPIRES_AT);
-  const [generationPaused, publishingPaused, generationIntervalWeeksRaw, marketConfig] = await Promise.all([
+  const [generationPaused, publishingPaused, generationIntervalWeeksRaw, marketConfig, viewerUsers] = await Promise.all([
     getSetting("generationPaused"),
     getSetting("publishingPaused"),
     getSettingString("generationIntervalWeeks", DEFAULT_GENERATION_INTERVAL_WEEKS),
     getMarketConfig(),
+    prisma.viewerUser.findMany({
+      orderBy: { createdAt: "asc" },
+      select: { id: true, username: true, active: true, createdAt: true },
+    }),
   ]);
+
+  const users = viewerUsers.map((user) => ({ ...user, createdAt: user.createdAt.toISOString() }));
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-4 sm:py-6">
@@ -105,6 +118,8 @@ export default async function ConfigPage() {
           <li>docs/01-produto-referencia.md — referência de produto usada pela geração de conteúdo</li>
         </ul>
       </section>
+
+      <ViewersControls initialUsers={users} />
 
       <section className="rounded-lg border border-zinc-200 bg-white p-4">
         <h2 className="font-medium text-zinc-900">Sessão</h2>

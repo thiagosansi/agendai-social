@@ -75,10 +75,18 @@ dos dois, uma navegação de página (`Accept: text/html`) é redirecionada para
 `/login?next=...`; qualquer outra requisição (curl sem esse header, scripts)
 continua recebendo `401` + `WWW-Authenticate` como antes.
 
-O cookie de sessão (`lib/session.ts`) é um HMAC-SHA256 de `APP_PASSWORD` com
-uma expiração embutida (~180 dias) — não existe um store de sessões
-separado, então **rotacionar `APP_PASSWORD` invalida todas as sessões
-existentes** imediatamente, junto com o Basic Auth. Para sair de uma sessão
+Existem dois papéis. **Dono**: usuário `admin` + `APP_PASSWORD`, sessão de
+180 dias. **Visualizador**: cadastrado em Config → "Acessos" (usuário
+3–30 chars `[a-z0-9._]`, senha ≥8, hash scrypt), sessão de 30 dias — vê tudo
+exceto Config e não pode mutar (a API responde `403 somente leitura`).
+Desativar/remover um visualizador bloqueia o acesso na próxima navegação
+(o layout confere o status no banco) e as sessões expiram sozinhas em
+30 dias; **rotacionar `APP_PASSWORD` invalida todas as sessões** (dono e
+visualizadores) imediatamente, junto com o Basic Auth. Todas as rotas de
+mutação usadas pela UI (`PATCH /api/pieces/:id`, upload/reorder/delete de
+imagem, `PATCH /api/settings`, push, `/api/users`) agora exigem sessão de
+dono — antes as rotas de peça/imagem não tinham nenhuma checagem de auth.
+Basic Auth continua aceito para curl (como dono). Para sair de uma sessão
 específica sem trocar a senha, use **Config → Sessão → Sair**, que limpa o
 cookie deste aparelho.
 

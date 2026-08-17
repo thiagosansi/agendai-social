@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireSameOrigin } from "@/lib/auth";
+import { requireOwner } from "@/lib/session";
 import {
   DEFAULT_GENERATION_INTERVAL_WEEKS,
   getMarketConfig,
@@ -55,12 +56,15 @@ export async function GET() {
 
 // PATCH /api/settings
 // Partial update of the kill-switches from the Config page toggles. Same-origin
-// only (see lib/auth.ts requireSameOrigin) — this single-user app has no bearer
-// token for browser-originated writes, so the Fetch Metadata Sec-Fetch-Site
-// header stands in for auth here.
+// (see lib/auth.ts requireSameOrigin) plus owner-only (lib/session.ts
+// requireOwner) — this route was previously reachable by any same-origin
+// caller, including a logged-in viewer.
 export async function PATCH(req: NextRequest) {
   const authError = requireSameOrigin(req);
   if (authError) return authError;
+
+  const ownerError = await requireOwner(req);
+  if (ownerError) return ownerError;
 
   let body: unknown;
   try {
