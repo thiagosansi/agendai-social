@@ -1,6 +1,13 @@
 import { redirect } from "next/navigation";
-import { DEFAULT_GENERATION_INTERVAL_WEEKS, getMarketConfig, getSetting, getSettingString } from "@/lib/settings";
+import {
+  DEFAULT_GENERATION_INTERVAL_WEEKS,
+  getCadenceConfig,
+  getMarketConfig,
+  getSetting,
+  getSettingString,
+} from "@/lib/settings";
 import { PauseControls } from "@/components/config/PauseControls";
+import { CadenceControls } from "@/components/config/CadenceControls";
 import { NotificationControls } from "@/components/config/NotificationControls";
 import { MarketControls } from "@/components/config/MarketControls";
 import { ViewersControls, type ViewerUserRole } from "@/components/config/ViewersControls";
@@ -33,16 +40,18 @@ export default async function ConfigPage() {
   if (session?.role !== "owner") redirect("/");
 
   const status = tokenStatus(process.env.META_TOKEN_EXPIRES_AT);
-  const [generationPaused, publishingPaused, generationIntervalWeeksRaw, marketConfig, viewerUsers] = await Promise.all([
-    getSetting("generationPaused"),
-    getSetting("publishingPaused"),
-    getSettingString("generationIntervalWeeks", DEFAULT_GENERATION_INTERVAL_WEEKS),
-    getMarketConfig(),
-    prisma.viewerUser.findMany({
-      orderBy: { createdAt: "asc" },
-      select: { id: true, username: true, role: true, active: true, createdAt: true },
-    }),
-  ]);
+  const [generationPaused, publishingPaused, generationIntervalWeeksRaw, marketConfig, viewerUsers, cadenceConfig] =
+    await Promise.all([
+      getSetting("generationPaused"),
+      getSetting("publishingPaused"),
+      getSettingString("generationIntervalWeeks", DEFAULT_GENERATION_INTERVAL_WEEKS),
+      getMarketConfig(),
+      prisma.viewerUser.findMany({
+        orderBy: { createdAt: "asc" },
+        select: { id: true, username: true, role: true, active: true, createdAt: true },
+      }),
+      getCadenceConfig(),
+    ]);
 
   // viewerUsers[].role is a plain DB string, not the ViewerUserRole union —
   // normalize any unexpected stored value to "viewer" (same fallback as
@@ -61,7 +70,15 @@ export default async function ConfigPage() {
         initialSettings={{
           generationPaused,
           publishingPaused,
+        }}
+      />
+
+      <CadenceControls
+        initialSettings={{
           generationIntervalWeeks: Number(generationIntervalWeeksRaw),
+          piecesPerRound: cadenceConfig.piecesPerRound,
+          postingWeekdays: cadenceConfig.postingWeekdays,
+          postingTime: cadenceConfig.postingTime,
         }}
       />
 

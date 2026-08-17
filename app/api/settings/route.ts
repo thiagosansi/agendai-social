@@ -3,9 +3,11 @@ import { requireSameOrigin } from "@/lib/auth";
 import { requireOwner } from "@/lib/session";
 import {
   DEFAULT_GENERATION_INTERVAL_WEEKS,
+  getCadenceConfig,
   getMarketConfig,
   getSetting,
   getSettingString,
+  setCadenceConfig,
   setMarketConfig,
   setSetting,
   setSettingString,
@@ -27,16 +29,20 @@ interface SettingsPayload {
   forceNextGeneration: boolean;
   marketCompetitors: string[];
   marketHashtags: string[];
+  piecesPerRound: number;
+  postingWeekdays: number[];
+  postingTime: string;
 }
 
 async function readSettings(): Promise<SettingsPayload> {
-  const [generationPaused, publishingPaused, generationIntervalWeeksRaw, forceNextGeneration, marketConfig] =
+  const [generationPaused, publishingPaused, generationIntervalWeeksRaw, forceNextGeneration, marketConfig, cadenceConfig] =
     await Promise.all([
       getSetting(GENERATION_KEY),
       getSetting(PUBLISHING_KEY),
       getSettingString(GENERATION_INTERVAL_KEY, DEFAULT_GENERATION_INTERVAL_WEEKS),
       getSetting(FORCE_NEXT_GENERATION_KEY),
       getMarketConfig(),
+      getCadenceConfig(),
     ]);
   return {
     generationPaused,
@@ -45,6 +51,9 @@ async function readSettings(): Promise<SettingsPayload> {
     forceNextGeneration,
     marketCompetitors: marketConfig.competitors,
     marketHashtags: marketConfig.hashtags,
+    piecesPerRound: cadenceConfig.piecesPerRound,
+    postingWeekdays: cadenceConfig.postingWeekdays,
+    postingTime: cadenceConfig.postingTime,
   };
 }
 
@@ -88,6 +97,9 @@ export async function PATCH(req: NextRequest) {
     forceNextGeneration,
     marketCompetitors,
     marketHashtags,
+    piecesPerRound,
+    postingWeekdays,
+    postingTime,
   } = parsed.data;
 
   await Promise.all([
@@ -101,6 +113,9 @@ export async function PATCH(req: NextRequest) {
       : Promise.resolve(),
     marketCompetitors !== undefined || marketHashtags !== undefined
       ? setMarketConfig({ competitors: marketCompetitors, hashtags: marketHashtags })
+      : Promise.resolve(),
+    piecesPerRound !== undefined || postingWeekdays !== undefined || postingTime !== undefined
+      ? setCadenceConfig({ piecesPerRound, postingWeekdays, postingTime })
       : Promise.resolve(),
   ]);
 

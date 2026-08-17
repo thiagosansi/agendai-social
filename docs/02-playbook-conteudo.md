@@ -33,11 +33,12 @@ Se qualquer um desses inputs estiver ausente ou inacessível na hora da execuç�
 
 ## 2. Cadência e rotação
 
-- **Cadência default**: 1 rodada por semana, gerando **2 peças** por rodada. Parâmetro `PECAS_POR_RODADA` (default `2`) — o dono pode pedir para subir até `4` numa rodada específica, indicando isso no prompt daquela execução (ver seção 7).
+- **Cadência default**: 1 rodada por semana, gerando **2 peças** por rodada. Mas a frequência de geração, o número de peças por rodada (1 a 4) e os dias/horário de postagem são configuráveis pelo dono em `/config` → "Cadência de postagem" (`piecesPerRound`, `postingWeekdays`, `postingTime`) e "Frequência de geração" (`generationIntervalWeeks`), e chegam à rotina a cada execução via `GET /api/report/latest` (`generationIntervalWeeks`, `generationDue`, `generationPaused`, `piecesPerRound`, `nextPublishSlots`). O antigo parâmetro `PECAS_POR_RODADA` no prompt da rotina agora é só um override pontual (≤ 4) para uma execução específica — não o mecanismo normal de ajustar cadência.
 - **Rotação de formato em ciclo de 2 semanas** (cobre os 4 formatos a cada 2 semanas):
   - **Semana A** (semana ISO ímpar dentro do ciclo do produto): carrossel + stories.
   - **Semana B**: reels IA + estático.
-  - Se `PECAS_POR_RODADA` for maior que 2, complete o par da outra semana adiantado, mas nunca gere 2 peças do mesmo formato na mesma rodada sem necessidade clara (registrar por quê nas notas da peça).
+  - Se `piecesPerRound` for igual a `1`, gere só o primeiro formato do par da semana (carrossel na Semana A, reels na Semana B).
+  - Se `piecesPerRound` for maior que 2, complete o par da outra semana adiantado, mas nunca gere 2 peças do mesmo formato na mesma rodada sem necessidade clara (registrar por quê nas notas da peça).
 
 ### Pilares de conteúdo (rotação, 6 pilares)
 
@@ -173,6 +174,11 @@ e execute uma rodada completa de conteúdo de Instagram para a semana ISO atual,
 seguindo o playbook do início ao fim (seções 1 a 4).
 
 Regras críticas (repetidas aqui caso o playbook não seja lido por algum motivo):
+- Leia GET /api/report/latest antes de tudo: aborte sem gerar nada se
+  generationPaused ou generationDue=false; gere exatamente piecesPerRound
+  peças e use nextPublishSlots como publishAt, verbatim (ver
+  docs/rotina-geracao.md para o passo a passo completo desses gates e
+  fallback).
 - Fonte factual única é docs/01-produto-referencia.md — nunca invente
   feature, número ou plano que não esteja lá.
 - Nunca prometa resultado de negócio garantido, só mecânica real do produto.
@@ -191,6 +197,8 @@ Ao final, reporte na sua resposta: peças criadas (id, formato, pilar,
 segmento), resultado do claim-check, e divergências suspeitas entre código e
 01-produto-referencia.md, se houver.
 ```
+
+**Após deploy/alteração do prompt**: cole o prompt atualizado de `docs/rotina-geracao.md` (ou o resumido acima) na rotina cloud (`/schedule`) uma única vez, sempre que este documento ou `docs/rotina-geracao.md` mudar. A partir daí, a cadência (frequência, peças por rodada, dias/horário) é controlada só por `/config` — não é preciso editar a rotina de novo para mudanças de cadência, só para mudanças de processo/regras.
 
 **Como o dono revisa**: abre a interface de aprovação do Social Studio, revisa cada peça pelo checklist da seção 5, faz upload da imagem gerada a partir do `imagePrompt` e aprova. O cron diário publica as peças aprovadas automaticamente.
 

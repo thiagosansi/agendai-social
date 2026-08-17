@@ -101,6 +101,10 @@ function dedupe(items: string[]): string[] {
   return Array.from(new Set(items));
 }
 
+function dedupeNumbers(items: number[]): number[] {
+  return Array.from(new Set(items)).sort((a, b) => a - b);
+}
+
 // Instagram usernames: letters, digits, periods and underscores, 1-30 chars.
 export const marketCompetitorsSchema = z
   .array(
@@ -124,6 +128,17 @@ export const marketHashtagsSchema = z
   .max(10)
   .transform(dedupe);
 
+// Posting cadence — pieces per round and the weekday/time slots the
+// generation routine distributes publishAt across (lib/settings.ts's
+// CadenceConfig). postingWeekdays is deduped + sorted ascending so
+// downstream consumers (computeNextPublishSlots) never see duplicates or an
+// unsorted list.
+const postingWeekdaysSchema = z.array(z.number().int().min(0).max(6)).min(1).max(7).transform(dedupeNumbers);
+
+const postingTimeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "postingTime must be HH:MM");
+
 // PATCH /api/settings — partial update of the pause/kill-switch flags,
 // generation cadence and market intelligence lists in AppSetting
 // (lib/settings.ts). All fields optional so the Config page can update one
@@ -137,10 +152,13 @@ export const patchSettingsSchema = z
     forceNextGeneration: z.boolean().optional(),
     marketCompetitors: marketCompetitorsSchema.optional(),
     marketHashtags: marketHashtagsSchema.optional(),
+    piecesPerRound: z.number().int().min(1).max(4).optional(),
+    postingWeekdays: postingWeekdaysSchema.optional(),
+    postingTime: postingTimeSchema.optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message:
-      "at least one of generationPaused, publishingPaused, generationIntervalWeeks, forceNextGeneration, marketCompetitors, marketHashtags must be provided",
+      "at least one of generationPaused, publishingPaused, generationIntervalWeeks, forceNextGeneration, marketCompetitors, marketHashtags, piecesPerRound, postingWeekdays, postingTime must be provided",
   });
 
 export type PatchSettingsInput = z.infer<typeof patchSettingsSchema>;

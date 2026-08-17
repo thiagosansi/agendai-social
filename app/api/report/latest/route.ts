@@ -2,9 +2,9 @@ import type { NextRequest } from "next/server";
 import { PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireGenerationToken } from "@/lib/auth";
-import { DEFAULT_GENERATION_INTERVAL_WEEKS, getSetting, getSettingString } from "@/lib/settings";
+import { DEFAULT_GENERATION_INTERVAL_WEEKS, getCadenceConfig, getSetting, getSettingString } from "@/lib/settings";
 import { buildRanking, type PillarFormatRanking, type Totals } from "@/lib/report";
-import { computeGenerationDue } from "@/lib/generation-schedule";
+import { computeGenerationDue, computeNextPublishSlots, WEEKDAY_LABELS_PT_BR } from "@/lib/generation-schedule";
 
 export const runtime = "nodejs";
 
@@ -153,7 +153,8 @@ export async function GET(req: NextRequest) {
 
   const recommendations = buildRecommendations(ranking);
   const tokenWarning = buildTokenWarning();
-  const generatedAt = new Date().toISOString();
+  const now = new Date();
+  const generatedAt = now.toISOString();
 
   const markdown = buildMarkdown({
     generatedAt,
@@ -177,15 +178,31 @@ export async function GET(req: NextRequest) {
   // one-shot override armed by the Fila "Gerar rodada agora" button
   // (POST /api/pieces clears it back to false on the next successful
   // generation — see app/api/pieces/route.ts).
-  const [generationIntervalWeeksRaw, forceNextGeneration, lastPiece] = await Promise.all([
+  const [generationIntervalWeeksRaw, forceNextGeneration, lastPiece, cadenceConfig] = await Promise.all([
     getSettingString("generationIntervalWeeks", DEFAULT_GENERATION_INTERVAL_WEEKS),
     getSetting("forceNextGeneration"),
     prisma.piece.findFirst({ orderBy: { createdAt: "desc" }, select: { createdAt: true } }),
+    getCadenceConfig(),
   ]);
   const generationIntervalWeeks = Number(generationIntervalWeeksRaw);
   const generationDue = forceNextGeneration
     ? true
     : computeGenerationDue(lastPiece?.createdAt ?? null, generationIntervalWeeks);
+
+  // Posting cadence (lib/settings.ts's CadenceConfig) plus precomputed
+  // publish slots (lib/generation-schedule.ts's computeNextPublishSlots) —
+  // the cloud generation routine (docs/rotina-geracao.md) copies
+  // `nextPublishSlots` verbatim into each new Piece's `publishAt` instead of
+  // doing its own timezone/weekday arithmetic. `postingWeekdayLabels` mirrors
+  // `postingWeekdays` 1:1 in pt-BR so the routine never has to interpret the
+  // 0=Sunday convention itself.
+  const nextPublishSlots = computeNextPublishSlots(
+    now,
+    cadenceConfig.postingWeekdays,
+    cadenceConfig.postingTime,
+    cadenceConfig.piecesPerRound,
+  ).map((slot) => slot.toISOString());
+  const postingWeekdayLabels = cadenceConfig.postingWeekdays.map((day) => WEEKDAY_LABELS_PT_BR[day]);
 
   return Response.json({
     generatedAt,
@@ -199,5 +216,11 @@ export async function GET(req: NextRequest) {
     generationPaused,
     generationIntervalWeeks,
     generationDue,
+    piecesPerRound: cadenceConfig.piecesPerRound,
+    postingWeekdays: cadenceConfig.postingWeekdays,
+    postingWeekdayLabels,
+    postingTime: cadenceConfig.postingTime,
+    postingTimezone: "America/Sao_Paulo",
+    nextPublishSlots,
   });
 }

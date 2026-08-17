@@ -5,7 +5,6 @@ import { useState } from "react";
 interface SettingsPayload {
   generationPaused: boolean;
   publishingPaused: boolean;
-  generationIntervalWeeks: number;
 }
 
 interface ToggleConfig {
@@ -26,13 +25,6 @@ const TOGGLES: ToggleConfig[] = [
     label: "Pausar publicações",
     description: "O cron diário não publica nada enquanto ativo; peças aprovadas aguardam.",
   },
-];
-
-const FREQUENCY_OPTIONS: { value: number; label: string }[] = [
-  { value: 1, label: "Semanal" },
-  { value: 2, label: "Quinzenal" },
-  { value: 3, label: "A cada 3 semanas" },
-  { value: 4, label: "Mensal (4 semanas)" },
 ];
 
 type PendingKey = keyof SettingsPayload | null;
@@ -68,34 +60,6 @@ export function PauseControls({ initialSettings }: { initialSettings: SettingsPa
     } catch {
       setSettings(previous);
       setError("Falha de rede ao salvar a alteração.");
-    } finally {
-      setPendingKey(null);
-    }
-  }
-
-  async function updateFrequency(weeks: number) {
-    const previous = settings;
-
-    setSettings({ ...settings, generationIntervalWeeks: weeks });
-    setPendingKey("generationIntervalWeeks");
-    setError(null);
-
-    try {
-      const res = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ generationIntervalWeeks: weeks }),
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        setSettings(previous);
-        setError(body.error ?? "Não foi possível salvar a frequência.");
-        return;
-      }
-      setSettings((current) => ({ ...current, ...body }));
-    } catch {
-      setSettings(previous);
-      setError("Falha de rede ao salvar a frequência.");
     } finally {
       setPendingKey(null);
     }
@@ -138,28 +102,6 @@ export function PauseControls({ initialSettings }: { initialSettings: SettingsPa
             </div>
           );
         })}
-      </div>
-
-      <div className="mt-3 flex flex-col gap-1 rounded-md bg-zinc-50 p-3">
-        <label htmlFor="generation-interval-weeks" className="text-sm font-medium text-zinc-800">
-          Frequência de geração
-        </label>
-        <select
-          id="generation-interval-weeks"
-          value={settings.generationIntervalWeeks}
-          disabled={pendingKey === "generationIntervalWeeks"}
-          onChange={(e) => updateFrequency(Number(e.target.value))}
-          className="rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-800 disabled:opacity-50"
-        >
-          {FREQUENCY_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-        <p className="text-xs text-zinc-500">
-          A rotina acorda toda semana e decide, com base nisso, se a rodada está no prazo.
-        </p>
       </div>
 
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}

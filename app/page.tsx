@@ -1,8 +1,8 @@
 import { Inbox, CalendarClock, Send, AlertTriangle } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { isVideoMedia, orderedImagesInclude } from "@/lib/piece-images";
-import { DEFAULT_GENERATION_INTERVAL_WEEKS, getSetting, getSettingString } from "@/lib/settings";
-import { computeGenerationDue } from "@/lib/generation-schedule";
+import { DEFAULT_GENERATION_INTERVAL_WEEKS, getCadenceConfig, getSetting, getSettingString } from "@/lib/settings";
+import { computeGenerationDue, WEEKDAY_LABELS_PT_BR } from "@/lib/generation-schedule";
 import { tokenStatus } from "@/lib/meta-token";
 import { formatDateSP } from "@/lib/format";
 import { getSession } from "@/lib/session-server";
@@ -74,6 +74,7 @@ export default async function Home() {
     forceNextGeneration,
     lastPiece,
     report,
+    cadenceConfig,
   ] = await Promise.all([
     prisma.piece.groupBy({ by: ["status"], _count: { _all: true } }),
     prisma.piece.findMany({
@@ -103,6 +104,7 @@ export default async function Home() {
     getSetting("forceNextGeneration"),
     prisma.piece.findFirst({ orderBy: { createdAt: "desc" }, select: { createdAt: true } }),
     prisma.analysisReport.findFirst({ orderBy: { createdAt: "desc" } }),
+    getCadenceConfig(),
   ]);
 
   const countByStatus: Record<string, number> = {};
@@ -118,6 +120,13 @@ export default async function Home() {
     ? true
     : computeGenerationDue(lastPiece?.createdAt ?? null, generationIntervalWeeks);
   const frequencyLabel = FREQUENCY_LABELS[generationIntervalWeeksRaw] ?? `A cada ${generationIntervalWeeks} semana(s)`;
+
+  const cadenceWeekdaysLabel = cadenceConfig.postingWeekdays
+    .map((day) => WEEKDAY_LABELS_PT_BR[day])
+    .join(", ");
+  const cadencePiecesLabel =
+    cadenceConfig.piecesPerRound === 1 ? "1 peça/rodada" : `${cadenceConfig.piecesPerRound} peças/rodada`;
+  const cadenceLabel = `${cadencePiecesLabel} · ${cadenceWeekdaysLabel} às ${cadenceConfig.postingTime}`;
 
   // Alerts — computed server-side, hidden entirely when nothing to report.
   const alerts: DashboardAlert[] = [];
@@ -272,6 +281,7 @@ export default async function Home() {
               <p className="mt-0.5 text-xs text-zinc-500">
                 Próxima rodada: {generationDue ? "devida agora" : "dentro do prazo"}
               </p>
+              <p className="mt-0.5 text-xs text-zinc-500">Cadência: {cadenceLabel}</p>
             </li>
             <li className="rounded-md bg-zinc-50 p-3">
               <div className="flex items-center justify-between gap-2">

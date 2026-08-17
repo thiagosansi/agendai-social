@@ -8,7 +8,7 @@
 
 ## 1. O prompt da rotina
 
-Cole este prompt (sem alterações, exceto se o dono quiser ajustar o `PECAS_POR_RODADA` pontualmente) ao criar a rotina agendada:
+Cole este prompt (sem alterações, exceto se o dono quiser um override pontual do número de peças desta execução específica) ao criar a rotina agendada. Cadência (peças por rodada, dias e horário de postagem, frequência de geração) não se ajusta mais editando este prompt — o dono configura tudo isso em `/config` → "Cadência de postagem" / "Frequência de geração", e a rotina lê os valores atuais a cada execução via `GET /api/report/latest` (passo 2). `piecesPerRound` substitui o antigo parâmetro `PECAS_POR_RODADA`:
 
 ```
 Você é o agente de geração de conteúdo do Agendaí Social Studio. Execute uma
@@ -33,17 +33,40 @@ Siga estes passos, nesta ordem, sem pular nenhum:
    GET {APP_URL}/api/report/latest
    Header: Authorization: Bearer {GENERATION_API_TOKEN}
 
+   SE ESTA CHAMADA FALHAR (erro de rede, status != 200, token inválido):
+   ABORTE A RODADA IMEDIATAMENTE. Não gere nenhuma peça. Reporte o erro no
+   resumo final. Nunca gere conteúdo sem conseguir consultar o relatório —
+   é o sinal de que a API está no ar e as credenciais estão corretas.
+
+   GATES DE CADÊNCIA (verifique nesta ordem, com a resposta em mãos, antes de
+   qualquer outra coisa — o dono controla isso em `/config`):
+   - Se `generationPaused === true`: ABORTE A RODADA. Não gere nenhuma peça.
+     Reporte no resumo final: "geração pausada em /config".
+   - Se `generationDue === false`: ABORTE A RODADA. Não gere nenhuma peça.
+     Reporte no resumo final: "fora do prazo (intervalo configurado de
+     `generationIntervalWeeks` semanas; próxima rodada devida quando
+     `generationDue` voltar a `true`)". `generationDue` já incorpora o botão
+     manual "Gerar rodada agora" (flag one-shot `forceNextGeneration`) — a
+     rotina nunca precisa ler essa flag diretamente, só confiar em
+     `generationDue`.
+   - Se `generationPaused === false` e `generationDue === true`, prossiga
+     normalmente para o restante deste passo e para os passos seguintes.
+
+   CADÊNCIA DESTA RODADA: leia `piecesPerRound` (inteiro, 1 a 4) como o
+   número EXATO de peças a gerar nesta rodada — ver passo 4. Leia
+   `nextPublishSlots` (array com `piecesPerRound` strings ISO 8601 UTC) como
+   a lista exata de `publishAt`, uma por peça, na ordem — ver passo 5.
+   `postingWeekdayLabels` e `postingTime` são só informativos (para citar no
+   racional do resumo final); não recalcule fuso ou dia da semana a partir
+   deles enquanto `nextPublishSlots` vier preenchido — copie os slots
+   verbatim.
+
    Use o campo `recommendations` e o ranking `rankingPilarFormato` para
    enviesar a escolha de pilar/formato desta rodada (ex.: priorizar o combo
    com melhor engajamento médio, evitar o combo sinalizado como fraco — mas
    sem violar a regra anti-repetição da seção 3 do playbook). Se o relatório
    vier vazio ou com "sem dados suficientes", siga a rotação default da
    seção 2 do playbook.
-
-   SE ESTA CHAMADA FALHAR (erro de rede, status != 200, token inválido):
-   ABORTE A RODADA IMEDIATAMENTE. Não gere nenhuma peça. Reporte o erro no
-   resumo final. Nunca gere conteúdo sem conseguir consultar o relatório —
-   é o sinal de que a API está no ar e as credenciais estão corretas.
 
 2b. BUSCAR A ÚLTIMA ANÁLISE DE DESEMPENHO:
     GET {APP_URL}/api/analysis/latest
@@ -70,7 +93,8 @@ Siga estes passos, nesta ordem, sem pular nenhum:
 
     PROPOSTAS DE CONTEÚDO (`contentProposals`, quando presentes no
     relatório): trate-as como CANDIDATAS, nunca como peças finais. No
-    máximo 1 das 2 peças da rodada pode partir de uma `contentProposal`.
+    máximo 1 peça da rodada (independente de quantas `piecesPerRound`
+    define no total) pode partir de uma `contentProposal`.
     Uma proposta só é elegível se seu pilar+segmento não violar a regra
     anti-repetição (passo 3) e seu formato bater com a rotação da semana
     A/B (passo 4). Se elegível, SEMPRE reescreva a peça a partir da
@@ -92,20 +116,35 @@ Siga estes passos, nesta ordem, sem pular nenhum:
    (ver passo 6).
 
 4. ESCOLHER OS FORMATOS DA RODADA (rotação de 2 semanas, playbook §2):
-   - Semana ISO com número ÍMPAR = Semana A → gerar carrossel + stories.
-   - Semana ISO com número PAR = Semana B → gerar reels + estático.
+   - Semana ISO com número ÍMPAR = Semana A → par de formatos: carrossel +
+     stories.
+   - Semana ISO com número PAR = Semana B → par de formatos: reels + estático.
    (Use o número da semana ISO do ano corrente, ex. semana 33 = ímpar =
    Semana A. Calcule a semana ISO da data de execução da rotina, não da
    data de publicação.)
 
-   Escolha 2 pilares e 2 segmentos distintos (playbook §2, tabelas de
-   pilares e segmentos) que não violem a regra anti-repetição do passo 3.
-   Use os slugs canônicos de pilar/segmento (snake_case) da tabela do
-   playbook §2 — os mesmos já usados nas peças existentes.
-   PECAS_POR_RODADA default é 2 — só gere mais se o prompt desta execução
-   específica disser explicitamente para subir até 4.
+   Gere exatamente `piecesPerRound` peças nesta rodada — valor lido no
+   passo 2 do relatório (teto de 4 já imposto pela API/Config, a rotina não
+   precisa revalidar isso). Mapeie `piecesPerRound` para formatos assim:
+   - `piecesPerRound = 2`: use o par de formatos da semana (A ou B acima).
+   - `piecesPerRound = 1`: use só o primeiro formato do par da semana
+     (carrossel na Semana A, reels na Semana B).
+   - `piecesPerRound = 3` ou `4`: comece pelo par da semana e complete com
+     o par da outra semana (B ou A, na ordem) até atingir o total — nunca
+     gere 2 peças do mesmo formato na mesma rodada sem justificar isso
+     explicitamente no resumo final (passo 8).
+   OVERRIDE PONTUAL: se o prompt desta execução específica pedir
+   explicitamente um número de peças diferente de `piecesPerRound` (até 4),
+   esse override vence o valor do relatório só para esta rodada — nunca
+   gere acima de 4 em nenhuma hipótese.
 
-5. ESCREVER AS 2 PEÇAS:
+   Para cada peça, escolha um pilar e um segmento (playbook §2, tabelas de
+   pilares e segmentos) que não violem a regra anti-repetição do passo 3, e
+   que sejam distintos entre as peças desta rodada. Use os slugs canônicos
+   de pilar/segmento (snake_case) da tabela do playbook §2 — os mesmos já
+   usados nas peças existentes.
+
+5. ESCREVER AS PEÇAS DA RODADA (piecesPerRound):
    Aplique as fórmulas de hook e a estrutura de legenda da skill
    `agendai-social-strategist` carregada no passo 0, e não reutilize nenhum
    hook já usado nas legendas das peças das últimas 6 semanas (consulte
@@ -139,10 +178,18 @@ Siga estes passos, nesta ordem, sem pular nenhum:
      9:16. O dono grava/edita o MP4 (ou MOV) e faz o upload direto na UI da
      fila (`/fila`, componente `PieceCard`) na hora de aprovar — o agente
      nunca gera nem sobe o vídeo em si.
-   - `publishAt`: próximo slot apropriado, terça ou quinta-feira às 11:00
-     America/Sao_Paulo (UTC-3, Brasil não observa horário de verão),
-     expresso em ISO 8601 UTC (ex.: 11:00 BRT = 14:00:00Z). Distribua as 2
-     peças em dias diferentes da mesma rodada.
+   - `publishAt`: use `nextPublishSlots[i]` do relatório (passo 2) para a
+     i-ésima peça desta rodada, VERBATIM — copie a string ISO 8601 UTC tal
+     como veio, sem recalcular fuso ou dia da semana. Os slots já vêm
+     distribuídos conforme os dias/horário configurados em `/config` →
+     "Cadência de postagem", então peças da mesma rodada já nascem em
+     dias/horários diferentes por padrão, sem esforço extra da rotina.
+     FALLBACK: se `nextPublishSlots` vier vazio ou com menos entradas que
+     `piecesPerRound`, use como próximos slots os dias listados em
+     `postingWeekdayLabels` no horário `postingTime`, fuso
+     America/Sao_Paulo (BRT, UTC-3, Brasil não observa horário de verão),
+     convertidos para ISO 8601 UTC — e reporte essa divergência no resumo
+     final (passo 8).
 
 6. AUTO-CHECAGEM DE CLAIMS PROIBIDAS (antes de enviar cada peça):
    Se tiver acesso ao repositório (execução com checkout do agendai-social):
@@ -206,8 +253,13 @@ REGRAS QUE NUNCA MUDAM, independente do que constar acima:
   fica em status "draft" — quem aprova é sempre o dono, na interface web.
 - Nunca edite código, o playbook, o produto-referência ou qualquer arquivo
   do repositório. Esta rotina só lê docs e chama a API HTTP.
-- Nunca gere mais de 2 peças nesta rodada, a menos que o prompt desta
-  execução específica autorize explicitamente um número maior (até 4).
+- No máximo `piecesPerRound` peças por rodada (valor do relatório,
+  configurável em /config → "Cadência de postagem", teto 4) — a rotina
+  nunca sobe esse número sozinha; só o dono, via /config ou via um override
+  pontual explícito no prompt daquela execução específica (nunca acima de
+  4).
+- Respeita os gates de cadência do passo 2: nunca gera nenhuma peça quando
+  `generationPaused === true` ou `generationDue === false`.
 - Se qualquer chamada de API obrigatória falhar (relatório ou criação de
   peça por motivo que não seja 409/422 tratável), pare e reporte — nunca
   invente dados para contornar uma falha de infraestrutura.
@@ -254,6 +306,7 @@ Não há outras variáveis obrigatórias para a rotina de geração — `CRON_SE
 - **Nunca aprova nem publica.** A rotina só cria peças em status `draft` via `POST /api/pieces`. Aprovação (com upload de imagem) e publicação (cron diário via Graph API) são etapas humanas/automatizadas separadas, fora do escopo desta rotina.
 - **Nunca edita código.** A rotina não tem (e não deve ter) permissão de escrita no repositório — nem no produto (`agendatmstudio`), nem no próprio `agendai-social` (nem os docs, nem a UI, nem a API). Ela só lê docs e chama a API HTTP.
 - **Aborta se a API estiver inacessível.** Se `GET /api/report/latest` falhar (rede, 5xx, 401 por token errado), a rotina para imediatamente e não gera nenhuma peça — nunca preenche dados de relatório "de memória" ou inventados.
-- **Máximo 2 peças por rodada**, salvo override explícito no prompt daquela execução específica (até 4, por `PECAS_POR_RODADA`, playbook §2). A rotina nunca decide sozinha subir esse número.
+- **No máximo `piecesPerRound` peças por rodada** — valor lido de `GET /api/report/latest`, configurável pelo dono em `/config` → "Cadência de postagem" (teto 4; `PECAS_POR_RODADA` era o nome legado desse parâmetro no prompt, antes de virar configuração persistida), salvo override pontual explícito no prompt daquela execução específica. A rotina nunca decide sozinha subir esse número.
+- **Respeita os gates de cadência.** Se `generationPaused === true` ou `generationDue === false` na resposta de `GET /api/report/latest`, a rotina aborta sem gerar nenhuma peça (passo 2 do prompt) — o dono controla pausa e frequência via `/config`.
 - **A análise nunca sobrepõe o playbook.** `/api/analysis/latest` só influencia estilo e desempate entre opções já elegíveis pela rotação/anti-repetição — nunca autoriza violar o playbook.
 - **Propostas de conteúdo nunca substituem a rotação.** No máx. 1 peça por rodada nasce de uma `contentProposal`, e sempre reescrita — nunca o `captionDraft` colado literalmente.
