@@ -1,5 +1,6 @@
 import { DEFAULT_GENERATION_INTERVAL_WEEKS, getSetting, getSettingString } from "@/lib/settings";
 import { PauseControls } from "@/components/config/PauseControls";
+import { NotificationControls } from "@/components/config/NotificationControls";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +9,10 @@ const REQUIRED_ENVS = [
   { key: "META_IG_TOKEN", label: "Token de acesso à Graph API" },
   { key: "BLOB_READ_WRITE_TOKEN", label: "Vercel Blob (upload de imagens em produção)" },
   { key: "CRON_SECRET", label: "Segredo do cron de publicação diária" },
+  { key: "APP_PASSWORD", label: "Senha de acesso a esta interface" },
+  { key: "VAPID_PUBLIC_KEY", label: "Chave pública das notificações push" },
+  { key: "VAPID_PRIVATE_KEY", label: "Chave privada das notificações push" },
+  { key: "VAPID_SUBJECT", label: "Contato das notificações push (mailto:...)" },
 ] as const;
 
 type TokenLevel = "green" | "amber" | "red";
@@ -66,6 +71,8 @@ export default async function ConfigPage() {
           generationIntervalWeeks: Number(generationIntervalWeeksRaw),
         }}
       />
+
+      <NotificationControls />
 
       <section className={`rounded-lg border p-4 ${LEVEL_CLASSES[status.level]}`}>
         <h2 className="font-medium">Token do Instagram (Meta Graph API)</h2>

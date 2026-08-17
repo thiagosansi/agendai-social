@@ -70,3 +70,21 @@ export const patchSettingsSchema = z
   });
 
 export type PatchSettingsInput = z.infer<typeof patchSettingsSchema>;
+
+// POST /api/push/subscribe — the shape a browser's PushSubscription
+// serialises to (`JSON.parse(JSON.stringify(subscription))`). Only the fields
+// we persist are declared; `expirationTime` and friends are ignored.
+export const pushSubscriptionSchema = z.object({
+  endpoint: z.string().url("endpoint must be a valid URL"),
+  keys: z.object({
+    p256dh: z.string().min(1, "keys.p256dh is required"),
+    auth: z.string().min(1, "keys.auth is required"),
+  }),
+});
+
+export type PushSubscriptionInput = z.infer<typeof pushSubscriptionSchema>;
+
+// POST /api/push/unsubscribe — the endpoint alone identifies the subscription.
+export const pushUnsubscribeSchema = z.object({
+  endpoint: z.string().url("endpoint must be a valid URL"),
+});

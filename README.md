@@ -56,6 +56,55 @@ pnpm dev
 | `META_IG_TOKEN` | Instagram Graph API access token. |
 | `META_TOKEN_EXPIRES_AT` | Expiry timestamp for `META_IG_TOKEN`, used to warn before it lapses. |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob token — stores the approved piece image before publish. |
+| `VAPID_PUBLIC_KEY` | Public half of the Web Push key pair. Served to the browser by `GET /api/push/subscribe`. |
+| `VAPID_PRIVATE_KEY` | Private half of the Web Push key pair — signs push requests, never leaves the server. |
+| `VAPID_SUBJECT` | Contact string required by the Web Push spec, e.g. `mailto:voce@exemplo.com`. |
+
+## Notificações
+
+Notificações push avisam no celular quando algo precisa de ação humana. Sem
+elas o app continua funcionando normalmente — a Config apenas mostra que estão
+desativadas.
+
+Dois gatilhos, ambos em `lib/notifications.ts`:
+
+| Gatilho | Quando dispara | Leva para |
+|---|---|---|
+| Peças aguardando aprovação | `POST /api/pieces` (rodada de geração) e o cron diário | `/fila` |
+| Falha ao publicar | Cron diário, quando `runPublish` marca uma peça como `failed` | `/publicados` |
+
+A geração cria uma peça por request, então o aviso de aprovação tem um
+cooldown de 30 minutos: uma rodada inteira vira uma única notificação, que
+conta a fila real no momento do envio. O aviso de falha não tem cooldown —
+o cron roda uma vez por dia e toda falha é um post perdido.
+
+### Setup
+
+1. Gere o par de chaves uma vez:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+2. Defina `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` e `VAPID_SUBJECT` no deploy.
+3. Abra **Config → Notificações** no aparelho e toque em **Ativar**.
+4. Use **Enviar notificação de teste** para confirmar a ponta a ponta.
+
+Repita os passos 3–4 em cada aparelho: cada um vira uma linha em
+`PushSubscription` e todas recebem os avisos. Assinaturas mortas (app
+desinstalado, dados limpos) são removidas sozinhas quando o serviço de push
+responde 404/410.
+
+> **iPhone**: o iOS só entrega push para PWA instalado na tela de início
+> (iOS 16.4+). Compartilhar → "Adicionar à Tela de Início", abrir o app por
+> lá e ativar de dentro dele. No Safari em aba comum a permissão até é
+> concedida, mas nada chega.
+
+O service worker (`public/sw.js`) só trata push — não faz cache. A fila de
+aprovação precisa refletir o estado do servidor sempre, então cache offline
+atrapalharia mais do que ajudaria. Ele fica fora do basic auth em
+`middleware.ts`: o navegador busca o script sem o header `Authorization` da
+página, e um `/sw.js` protegido daria 401 no registro.
 
 ## Product knowledge (`docs/`)
 

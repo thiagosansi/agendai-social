@@ -2,6 +2,11 @@ import type { NextRequest } from "next/server";
 import { requireCronSecret } from "@/lib/auth";
 import { runPublish, type PublishPayload } from "@/lib/cron-publish";
 import { runInsights, type InsightsPayload } from "@/lib/cron-insights";
+import {
+  notifyPendingApproval,
+  notifyPublishFailures,
+  notifySafely,
+} from "@/lib/notifications";
 
 export const runtime = "nodejs";
 
@@ -19,6 +24,20 @@ export async function GET(req: NextRequest) {
   if (authError) return authError;
 
   const publishPayload = await runPublish({ dryRun: false });
+
+  // Notify on anything that now needs a human. Both calls are isolated the
+  // same way the two halves of this route are: a push failure must not stop
+  // insights from running or turn a successful publish run into a 500.
+  const failures = publishPayload.results
+    .filter((result) => result.outcome === "failed")
+    .map((result) => ({ id: result.id, error: result.error }));
+
+  await notifySafely("publish failures", () => notifyPublishFailures(failures));
+
+  // Daily catch-up for a queue that was generated but never worked through —
+  // the generation-time notification only fires once per round, so without
+  // this a queue left pending would go quiet after the first reminder.
+  await notifySafely("pending approval", notifyPendingApproval);
 
   // Insights run only on Monday (UTC weekday 1)
   const now = new Date();
