@@ -2,8 +2,10 @@ import type { NextRequest } from "next/server";
 import { requireSameOrigin } from "@/lib/auth";
 import {
   DEFAULT_GENERATION_INTERVAL_WEEKS,
+  getMarketConfig,
   getSetting,
   getSettingString,
+  setMarketConfig,
   setSetting,
   setSettingString,
 } from "@/lib/settings";
@@ -22,20 +24,26 @@ interface SettingsPayload {
   publishingPaused: boolean;
   generationIntervalWeeks: number;
   forceNextGeneration: boolean;
+  marketCompetitors: string[];
+  marketHashtags: string[];
 }
 
 async function readSettings(): Promise<SettingsPayload> {
-  const [generationPaused, publishingPaused, generationIntervalWeeksRaw, forceNextGeneration] = await Promise.all([
-    getSetting(GENERATION_KEY),
-    getSetting(PUBLISHING_KEY),
-    getSettingString(GENERATION_INTERVAL_KEY, DEFAULT_GENERATION_INTERVAL_WEEKS),
-    getSetting(FORCE_NEXT_GENERATION_KEY),
-  ]);
+  const [generationPaused, publishingPaused, generationIntervalWeeksRaw, forceNextGeneration, marketConfig] =
+    await Promise.all([
+      getSetting(GENERATION_KEY),
+      getSetting(PUBLISHING_KEY),
+      getSettingString(GENERATION_INTERVAL_KEY, DEFAULT_GENERATION_INTERVAL_WEEKS),
+      getSetting(FORCE_NEXT_GENERATION_KEY),
+      getMarketConfig(),
+    ]);
   return {
     generationPaused,
     publishingPaused,
     generationIntervalWeeks: Number(generationIntervalWeeksRaw),
     forceNextGeneration,
+    marketCompetitors: marketConfig.competitors,
+    marketHashtags: marketConfig.hashtags,
   };
 }
 
@@ -69,7 +77,14 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  const { generationPaused, publishingPaused, generationIntervalWeeks, forceNextGeneration } = parsed.data;
+  const {
+    generationPaused,
+    publishingPaused,
+    generationIntervalWeeks,
+    forceNextGeneration,
+    marketCompetitors,
+    marketHashtags,
+  } = parsed.data;
 
   await Promise.all([
     generationPaused !== undefined ? setSetting(GENERATION_KEY, generationPaused) : Promise.resolve(),
@@ -79,6 +94,9 @@ export async function PATCH(req: NextRequest) {
       : Promise.resolve(),
     forceNextGeneration !== undefined
       ? setSetting(FORCE_NEXT_GENERATION_KEY, forceNextGeneration)
+      : Promise.resolve(),
+    marketCompetitors !== undefined || marketHashtags !== undefined
+      ? setMarketConfig({ competitors: marketCompetitors, hashtags: marketHashtags })
       : Promise.resolve(),
   ]);
 

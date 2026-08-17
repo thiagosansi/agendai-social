@@ -136,6 +136,10 @@ model AnalysisReport {
   summaryMarkdown String
   insights        Json
   recommendations Json
+  // schemaVersion 2 only — ready-to-review content proposals derived from
+  // insights.market (see lib/validation.ts's contentProposalSchema). Absent
+  // (null) on v1 reports.
+  contentProposals Json?
   source          String   @default("routine")
   schemaVersion   Int      @default(1)
 
@@ -151,4 +155,26 @@ model AppSetting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+// One row per market scan run (GET /api/analysis/market) — an app-mediated
+// Instagram Business Discovery + hashtag-search snapshot for the
+// competitors/hashtags configured on /config, since the (cloud-scheduled)
+// monthly analysis routine never holds META_IG_TOKEN. `competitors` and
+// `hashtags` carry the sanitized/claim-checked scan results (see
+// lib/market-scan.ts), `errors` carries per-item failures (private
+// account, hashtag not found, rate limit) that didn't abort the rest of
+// the scan. `hashtagsQueried` records only the hashtags Graph was actually
+// called for (skipped-by-quota tags are excluded) — GET /api/analysis/market
+// sums this across the last 7 days to enforce the 25-unique-hashtag safety
+// limit under Meta's 30/7-day cap.
+model MarketSnapshot {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  competitors     Json
+  hashtags        Json
+  hashtagsQueried String[]
+  errors          Json
+
+  @@index([createdAt])
 }

@@ -352,3 +352,177 @@ export async function getAccountInfo(): Promise<AccountInfo> {
   );
   return { followersCount: followersCount ?? null };
 }
+
+// --- Market scan (lib/market-scan.ts, GET /api/analysis/market) ----------
+//
+// The monthly analysis routine runs as an isolated cloud agent that never
+// holds META_IG_TOKEN, so market/competitor research must be mediated by
+// this app the same way GET /api/analysis/source mediates performance
+// data. These helpers wrap two read-only Graph endpoints: Business
+// Discovery (public profile + recent media of another Business/Creator
+// account) and hashtag top-media search. Both require the connected
+// account to itself be a Business/Creator account with
+// instagram_basic + instagram_manage_insights permissions.
+
+/** True when META_IG_USER_ID/META_IG_TOKEN are both set — never reads or returns the token value itself. */
+export function hasInstagramCredentials(): boolean {
+  return !!process.env.META_IG_USER_ID && !!process.env.META_IG_TOKEN;
+}
+
+export interface BusinessDiscoveryMedia {
+  caption: string | null;
+  commentsCount: number;
+  likeCount: number;
+  mediaType: string;
+  mediaProductType?: string;
+  timestamp: string;
+  permalink: string;
+}
+
+export interface BusinessDiscoveryResult {
+  username: string;
+  followersCount: number;
+  mediaCount: number;
+  media: BusinessDiscoveryMedia[];
+}
+
+interface RawBusinessDiscoveryMedia {
+  caption?: string;
+  like_count?: number;
+  comments_count?: number;
+  media_type?: string;
+  media_product_type?: string;
+  timestamp?: string;
+  permalink?: string;
+}
+
+interface RawBusinessDiscoveryResponse {
+  business_discovery?: {
+    username?: string;
+    followers_count?: number;
+    media_count?: number;
+    media?: { data?: RawBusinessDiscoveryMedia[] };
+  };
+}
+
+/**
+ * Fetches a public competitor profile + up to 12 recent posts via Business
+ * Discovery. Throws InstagramApiError if `business_discovery` is absent
+ * from the response (private account, not found, or not a Business/Creator
+ * account) instead of crashing on the destructure.
+ */
+// Mirrors marketCompetitorsSchema in lib/validation.ts. Settings writes are
+// already validated against this shape, but getBusinessDiscovery is an
+// exported function with no guard of its own — a value containing `)`,
+// `}` or `,` would break the Graph `fields` selector below, so re-check
+// here rather than trust the caller.
+const USERNAME_PATTERN = /^[a-z0-9._]{1,30}$/;
+
+export async function getBusinessDiscovery(username: string): Promise<BusinessDiscoveryResult> {
+  if (!USERNAME_PATTERN.test(username)) {
+    throw new InstagramApiError("invalid instagram username");
+  }
+  const { igUserId, token } = getConfig();
+  const response = await graphGet<RawBusinessDiscoveryResponse>(`/${igUserId}`, token, {
+    fields: `business_discovery.username(${username}){username,followers_count,media_count,media.limit(12){caption,like_count,comments_count,media_type,media_product_type,timestamp,permalink}}`,
+  });
+
+  const discovery = response.business_discovery;
+  if (!discovery) {
+    throw new InstagramApiError(
+      `business discovery unavailable for @${username} — private, not found, or not a Business/Creator account`,
+    );
+  }
+
+  return {
+    username: discovery.username ?? username,
+    followersCount: discovery.followers_count ?? 0,
+    mediaCount: discovery.media_count ?? 0,
+    media: (discovery.media?.data ?? []).map((item) => ({
+      caption: item.caption ?? null,
+      commentsCount: item.comments_count ?? 0,
+      likeCount: item.like_count ?? 0,
+      mediaType: item.media_type ?? "UNKNOWN",
+      mediaProductType: item.media_product_type,
+      timestamp: item.timestamp ?? "",
+      permalink: item.permalink ?? "",
+    })),
+  };
+}
+
+export interface HashtagMediaItem {
+  caption: string | null;
+  likeCount: number;
+  commentsCount: number;
+  mediaType: string;
+  timestamp: string;
+  permalink: string;
+}
+
+export interface HashtagTopMediaResult {
+  tag: string;
+  hashtagId: string;
+  media: HashtagMediaItem[];
+}
+
+interface RawHashtagSearchResponse {
+  data?: Array<{ id?: string }>;
+}
+
+interface RawHashtagMediaItem {
+  caption?: string;
+  like_count?: number;
+  comments_count?: number;
+  media_type?: string;
+  permalink?: string;
+  timestamp?: string;
+}
+
+interface RawHashtagTopMediaResponse {
+  data?: RawHashtagMediaItem[];
+}
+
+/**
+ * Resolves a hashtag to its Graph id via ig_hashtag_search, then fetches up
+ * to 15 top-media posts for it. Throws InstagramApiError if the search
+ * returns no id (hashtag doesn't exist / no matching hashtag object).
+ */
+// Mirrors marketHashtagsSchema in lib/validation.ts — same rationale as
+// USERNAME_PATTERN above (getHashtagTopMedia is exported and shouldn't
+// trust its caller either).
+const HASHTAG_PATTERN = /^[\p{L}\p{N}_]{1,60}$/u;
+
+export async function getHashtagTopMedia(tag: string): Promise<HashtagTopMediaResult> {
+  if (!HASHTAG_PATTERN.test(tag)) {
+    throw new InstagramApiError("invalid hashtag");
+  }
+  const { igUserId, token } = getConfig();
+
+  const search = await graphGet<RawHashtagSearchResponse>("/ig_hashtag_search", token, {
+    user_id: igUserId,
+    q: tag,
+  });
+  const hashtagId = search.data?.[0]?.id;
+  if (!hashtagId) {
+    throw new InstagramApiError(`hashtag not found: #${tag}`);
+  }
+
+  const topMedia = await graphGet<RawHashtagTopMediaResponse>(`/${hashtagId}/top_media`, token, {
+    user_id: igUserId,
+    fields: "caption,like_count,comments_count,media_type,permalink,timestamp",
+    limit: "15",
+  });
+
+  return {
+    tag,
+    hashtagId,
+    media: (topMedia.data ?? []).map((item) => ({
+      caption: item.caption ?? null,
+      likeCount: item.like_count ?? 0,
+      commentsCount: item.comments_count ?? 0,
+      mediaType: item.media_type ?? "UNKNOWN",
+      timestamp: item.timestamp ?? "",
+      permalink: item.permalink ?? "",
+    })),
+  };
+}

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { formatDateTimeSP } from "@/lib/format";
+import { FormatBadge } from "@/components/Badges";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,76 @@ type Recommendation = {
   evidence?: string;
   priority?: 0 | 1 | 2;
 };
+
+// schemaVersion 2 only — insights.market and root-level contentProposals
+// (see lib/validation.ts's analysisInsightsSchema/contentProposalSchema).
+type MarketCompetitor = {
+  username: string;
+  followers: number;
+  avgLikes: number;
+  avgComments: number;
+  themes: string[];
+  topPosts: { permalink: string; likes: number; comments: number; hookType: string }[];
+};
+
+type MarketHashtag = {
+  tag: string;
+  themes: string[];
+  samplePermalinks: string[];
+};
+
+type MarketWebTrend = {
+  title: string;
+  url: string;
+  takeaway: string;
+};
+
+type Market = {
+  competitors: MarketCompetitor[];
+  hashtags: MarketHashtag[];
+  webTrends: MarketWebTrend[];
+};
+
+type ContentProposal = {
+  pillar: string;
+  segment: string;
+  format: string;
+  hook: string;
+  captionDraft: string;
+  imagePrompt: string;
+  rationale?: string;
+  sources?: string[];
+};
+
+function isValidMarket(data: unknown): data is Market {
+  if (typeof data !== "object" || data === null) return false;
+  const obj = data as Record<string, unknown>;
+  return Array.isArray(obj.competitors) && Array.isArray(obj.hashtags) && Array.isArray(obj.webTrends);
+}
+
+function parseMarket(insights: unknown): Market | null {
+  if (typeof insights !== "object" || insights === null) return null;
+  const market = (insights as Record<string, unknown>).market;
+  return isValidMarket(market) ? market : null;
+}
+
+function isValidContentProposal(data: unknown): data is ContentProposal {
+  if (typeof data !== "object" || data === null) return false;
+  const obj = data as Record<string, unknown>;
+  return (
+    typeof obj.pillar === "string" &&
+    typeof obj.segment === "string" &&
+    typeof obj.format === "string" &&
+    typeof obj.hook === "string" &&
+    typeof obj.captionDraft === "string" &&
+    typeof obj.imagePrompt === "string"
+  );
+}
+
+function parseContentProposals(json: unknown): ContentProposal[] {
+  if (!Array.isArray(json)) return [];
+  return json.filter(isValidContentProposal);
+}
 
 function isValidRecommendation(data: unknown): data is Recommendation {
   if (typeof data !== "object" || data === null) return false;
@@ -129,6 +200,158 @@ export default async function AnalysePage() {
               );
             })()}
           </section>
+
+          {/* Market intelligence section — schemaVersion 2 only */}
+          {(() => {
+            const market = parseMarket(report.insights);
+            if (!market) return null;
+            return (
+              <section className="rounded-lg border border-zinc-200 bg-white p-4">
+                <h2 className="font-medium text-zinc-900">Mercado</h2>
+
+                {market.competitors.length > 0 && (
+                  <div className="mt-3">
+                    <h3 className="text-sm font-medium text-zinc-700">Concorrentes</h3>
+                    <ul className="mt-2 flex flex-col gap-2">
+                      {market.competitors.map((competitor, idx) => (
+                        <li key={idx} className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm">
+                          <div className="font-medium text-zinc-900">@{competitor.username}</div>
+                          <div className="mt-1 text-xs text-zinc-500">
+                            {competitor.followers.toLocaleString("pt-BR")} seguidores · média{" "}
+                            {competitor.avgLikes.toLocaleString("pt-BR")} curtidas ·{" "}
+                            {competitor.avgComments.toLocaleString("pt-BR")} comentários
+                          </div>
+                          {competitor.themes.length > 0 && (
+                            <div className="mt-1 text-xs text-zinc-600">
+                              Temas: {competitor.themes.join(", ")}
+                            </div>
+                          )}
+                          {competitor.topPosts.length > 0 && (
+                            <ul className="mt-2 flex flex-col gap-1">
+                              {competitor.topPosts.map((post, postIdx) => (
+                                <li key={postIdx} className="text-xs text-zinc-600">
+                                  <a
+                                    href={post.permalink}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-blue-600 underline"
+                                  >
+                                    {post.hookType}
+                                  </a>{" "}
+                                  — {post.likes.toLocaleString("pt-BR")} curtidas,{" "}
+                                  {post.comments.toLocaleString("pt-BR")} comentários
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {market.hashtags.length > 0 && (
+                  <div className="mt-4">
+                    <h3 className="text-sm font-medium text-zinc-700">Hashtags</h3>
+                    <ul className="mt-2 flex flex-col gap-2">
+                      {market.hashtags.map((hashtag, idx) => (
+                        <li key={idx} className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm">
+                          <div className="font-medium text-zinc-900">#{hashtag.tag}</div>
+                          {hashtag.themes.length > 0 && (
+                            <div className="mt-1 text-xs text-zinc-600">
+                              Temas: {hashtag.themes.join(", ")}
+                            </div>
+                          )}
+                          {hashtag.samplePermalinks.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-2 text-xs">
+                              {hashtag.samplePermalinks.map((link, linkIdx) => (
+                                <a
+                                  key={linkIdx}
+                                  href={link}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-blue-600 underline"
+                                >
+                                  exemplo {linkIdx + 1}
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {market.webTrends.length > 0 && (
+                  <div className="mt-4">
+                    <h3 className="text-sm font-medium text-zinc-700">Tendências (web)</h3>
+                    <ul className="mt-2 flex flex-col gap-2">
+                      {market.webTrends.map((trend, idx) => (
+                        <li key={idx} className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm">
+                          <a
+                            href={trend.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-medium text-blue-600 underline"
+                          >
+                            {trend.title}
+                          </a>
+                          <p className="mt-1 text-xs text-zinc-600">{trend.takeaway}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </section>
+            );
+          })()}
+
+          {/* Content proposals section — schemaVersion 2 only */}
+          {(() => {
+            const proposals = parseContentProposals(report.contentProposals);
+            if (proposals.length === 0) return null;
+            return (
+              <section className="rounded-lg border border-zinc-200 bg-white p-4">
+                <h2 className="font-medium text-zinc-900">Propostas de conteúdo</h2>
+                <ul className="mt-3 flex flex-col gap-3">
+                  {proposals.map((proposal, idx) => (
+                    <li key={idx} className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-600">
+                        <span>{proposal.pillar}</span>
+                        <span>·</span>
+                        <span>{proposal.segment}</span>
+                        <FormatBadge format={proposal.format} />
+                      </div>
+                      <p className="mt-2 text-sm font-medium text-zinc-900">{proposal.hook}</p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-800">
+                        {proposal.captionDraft}
+                      </p>
+                      <p className="mt-2 text-xs text-zinc-500">{proposal.imagePrompt}</p>
+                      {proposal.rationale && (
+                        <p className="mt-2 text-xs text-zinc-500">Racional: {proposal.rationale}</p>
+                      )}
+                      {proposal.sources && proposal.sources.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                          {proposal.sources.map((source, sourceIdx) => (
+                            <a
+                              key={sourceIdx}
+                              href={source}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-blue-600 underline"
+                            >
+                              fonte {sourceIdx + 1}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            );
+          })()}
 
           {/* Insights details (collapsed) */}
           <details className="rounded-lg border border-zinc-200 bg-white">

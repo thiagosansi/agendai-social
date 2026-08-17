@@ -1,6 +1,7 @@
-import { DEFAULT_GENERATION_INTERVAL_WEEKS, getSetting, getSettingString } from "@/lib/settings";
+import { DEFAULT_GENERATION_INTERVAL_WEEKS, getMarketConfig, getSetting, getSettingString } from "@/lib/settings";
 import { PauseControls } from "@/components/config/PauseControls";
 import { NotificationControls } from "@/components/config/NotificationControls";
+import { MarketControls } from "@/components/config/MarketControls";
 
 export const dynamic = "force-dynamic";
 
@@ -54,10 +55,11 @@ function tokenStatus(expiresAt: string | undefined): TokenStatus {
 
 export default async function ConfigPage() {
   const status = tokenStatus(process.env.META_TOKEN_EXPIRES_AT);
-  const [generationPaused, publishingPaused, generationIntervalWeeksRaw] = await Promise.all([
+  const [generationPaused, publishingPaused, generationIntervalWeeksRaw, marketConfig] = await Promise.all([
     getSetting("generationPaused"),
     getSetting("publishingPaused"),
     getSettingString("generationIntervalWeeks", DEFAULT_GENERATION_INTERVAL_WEEKS),
+    getMarketConfig(),
   ]);
 
   return (
@@ -73,6 +75,11 @@ export default async function ConfigPage() {
       />
 
       <NotificationControls />
+
+      <MarketControls
+        initialCompetitors={marketConfig.competitors}
+        initialHashtags={marketConfig.hashtags}
+      />
 
       <section className={`rounded-lg border p-4 ${LEVEL_CLASSES[status.level]}`}>
         <h2 className="font-medium">Token do Instagram (Meta Graph API)</h2>

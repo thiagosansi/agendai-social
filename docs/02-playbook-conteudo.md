@@ -128,6 +128,7 @@ Esta revisão agora é executada pela rotina de análise mensal documentada em `
 2. Ranquear pilares e formatos por `saves + comentários`.
 3. Sugerir ajuste na rotação (seção 2) com base no ranking — por exemplo, promover um pilar com desempenho consistentemente melhor, sem violar a regra anti-repetição.
 4. Verificar se `docs/01-produto-referencia.md` diverge do código atual do produto (features novas, desligadas ou com gate de plano alterado) e listar explicitamente o que precisa ser atualizado nesse documento — esta rotina **não edita** o `01-produto-referencia.md` diretamente, apenas sinaliza.
+5. Analisar mercado — concorrentes/hashtags configurados em `/config` via `GET /api/analysis/market` (quando configurados) e tendências web — e produzir de 3 a 5 propostas de conteúdo originais, persistidas em `contentProposals`. A rotina semanal de geração pode usar cada proposta como candidata (no máximo 1 por rodada, sempre reescrita), sempre respeitando as seções 2 e 3 deste playbook.
 
 ---
 

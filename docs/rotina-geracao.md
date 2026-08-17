@@ -68,6 +68,17 @@ Siga estes passos, nesta ordem, sem pular nenhum:
     elemento de teste (hook ou ângulo) fora do padrão vencedor indicado
     pela análise (anti-drift).
 
+    PROPOSTAS DE CONTEÚDO (`contentProposals`, quando presentes no
+    relatório): trate-as como CANDIDATAS, nunca como peças finais. No
+    máximo 1 das 2 peças da rodada pode partir de uma `contentProposal`.
+    Uma proposta só é elegível se seu pilar+segmento não violar a regra
+    anti-repetição (passo 3) e seu formato bater com a rotação da semana
+    A/B (passo 4). Se elegível, SEMPRE reescreva a peça a partir da
+    proposta — nunca cole o `captionDraft` literalmente — mantendo o CTA
+    padrão e as hashtags do playbook, e ainda assim rode a auto-checagem
+    de claims (passo 6). Registre no resumo (passo 8) qual proposta foi
+    usada (índice + hook) ou, se nenhuma era elegível, por quê.
+
 3. BUSCAR O HISTÓRICO RECENTE PARA A REGRA ANTI-REPETIÇÃO:
    GET {APP_URL}/api/pieces?since=6w
    (sem autenticação — este endpoint GET é público, ver README do repo)
@@ -235,3 +246,4 @@ Não há outras variáveis obrigatórias para a rotina de geração — `CRON_SE
 - **Aborta se a API estiver inacessível.** Se `GET /api/report/latest` falhar (rede, 5xx, 401 por token errado), a rotina para imediatamente e não gera nenhuma peça — nunca preenche dados de relatório "de memória" ou inventados.
 - **Máximo 2 peças por rodada**, salvo override explícito no prompt daquela execução específica (até 4, por `PECAS_POR_RODADA`, playbook §2). A rotina nunca decide sozinha subir esse número.
 - **A análise nunca sobrepõe o playbook.** `/api/analysis/latest` só influencia estilo e desempate entre opções já elegíveis pela rotação/anti-repetição — nunca autoriza violar o playbook.
+- **Propostas de conteúdo nunca substituem a rotação.** No máx. 1 peça por rodada nasce de uma `contentProposal`, e sempre reescrita — nunca o `captionDraft` colado literalmente.

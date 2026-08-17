@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAnalysisToken } from "@/lib/auth";
+import { checkText, loadRules } from "@/lib/claim-check";
 import { createAnalysisReportSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -29,7 +30,25 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { periodStart, periodEnd, summaryMarkdown, insights, recommendations, schemaVersion } = parsed.data;
+  const { periodStart, periodEnd, summaryMarkdown, insights, recommendations, contentProposals, schemaVersion } =
+    parsed.data;
+
+  // schemaVersion 2 only — every contentProposal's captionDraft goes through
+  // the same forbidden-claims check as a Piece's caption (see
+  // app/api/pieces/route.ts). First violation aborts the whole request so a
+  // bad proposal never gets persisted alongside good ones.
+  if (contentProposals) {
+    const rules = loadRules();
+    for (let i = 0; i < contentProposals.length; i++) {
+      const { ok, violations } = checkText(contentProposals[i].captionDraft, rules);
+      if (!ok) {
+        return Response.json(
+          { error: "captionDraft violates forbidden claims", proposalIndex: i, violations },
+          { status: 422 },
+        );
+      }
+    }
+  }
 
   const report = await prisma.analysisReport.create({
     data: {
@@ -38,6 +57,7 @@ export async function POST(req: NextRequest) {
       summaryMarkdown,
       insights,
       recommendations,
+      contentProposals: contentProposals ?? undefined,
       schemaVersion,
     },
   });
