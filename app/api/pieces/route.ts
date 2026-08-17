@@ -3,6 +3,7 @@ import { PieceStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireGenerationToken } from "@/lib/auth";
 import { checkText, loadRules } from "@/lib/claim-check";
+import { orderedImagesInclude } from "@/lib/piece-images";
 import { setSetting } from "@/lib/settings";
 import { createPieceSchema } from "@/lib/validation";
 import { isoWeekRange, parseSince } from "@/lib/iso-week";
@@ -42,6 +43,7 @@ export async function GET(req: NextRequest) {
   const pieces = await prisma.piece.findMany({
     where,
     orderBy: { publishAt: "asc" },
+    include: orderedImagesInclude,
   });
 
   return Response.json({ pieces });
@@ -107,6 +109,7 @@ export async function POST(req: NextRequest) {
       status: PieceStatus.draft,
       claimCheckPassed: true,
     },
+    include: orderedImagesInclude,
   });
 
   // One-shot override consumed: whether or not this round was manually

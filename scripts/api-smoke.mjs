@@ -143,8 +143,8 @@ async function main() {
     process.exit(1);
   }
 
-  // 4. PATCH status=approved without imageUrl -> 422
-  console.log("\n4. PATCH status=approved without imageUrl");
+  // 4. PATCH status=approved without any image -> 422
+  console.log("\n4. PATCH status=approved without any image");
   {
     const { res, body } = await jsonFetch(`/api/pieces/${pieceId}`, {
       method: "PATCH",
@@ -170,24 +170,38 @@ async function main() {
     );
   }
 
-  // 5. Image upload -> saves file and records imageUrl
-  console.log("\n5. POST /api/pieces/[id]/image");
-  {
+  function pngForm(label) {
     // 1x1 transparent PNG
     const pngBase64 =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
     const pngBytes = Buffer.from(pngBase64, "base64");
     const form = new FormData();
-    form.set("file", new Blob([pngBytes], { type: "image/png" }), "test.png");
+    form.set("file", new Blob([pngBytes], { type: "image/png" }), `${label}.png`);
+    return form;
+  }
 
-    const res = await fetch(`${BASE_URL}/api/pieces/${pieceId}/image`, {
-      method: "POST",
-      body: form,
-    });
+  // 5. Image upload -> appends a PieceImage
+  console.log("\n5. POST /api/pieces/[id]/image (1st image)");
+  let firstImageId, secondImageId;
+  {
+    const res = await fetch(`${BASE_URL}/api/pieces/${pieceId}/image`, { method: "POST", body: pngForm("a") });
     const body = await res.json().catch(() => null);
     assert(res.status === 200, `status is 200 (got ${res.status})`);
-    assert(typeof body?.piece?.imageUrl === "string" && body.piece.imageUrl.length > 0, "piece.imageUrl is set");
-    console.log(`     imageUrl: ${body?.piece?.imageUrl}`);
+    assert(Array.isArray(body?.piece?.images) && body.piece.images.length === 1, "piece.images has 1 entry");
+    firstImageId = body?.piece?.images?.[0]?.id;
+    console.log(`     image: ${body?.piece?.images?.[0]?.url}`);
+  }
+
+  // 5a. carrossel with only 1 image -> 422 (needs >= 2 to approve)
+  console.log("\n5a. PATCH status=approved with a carrossel piece that has only 1 image");
+  {
+    const { res, body } = await jsonFetch(`/api/pieces/${pieceId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "approved" }),
+    });
+    assert(res.status === 422, `status is 422 (got ${res.status})`);
+    assert(body?.error === "Carrossel precisa de pelo menos 2 imagens", `error message matches (got "${body?.error}")`);
   }
 
   // 5b. Oversized/wrong content-type upload -> 400
@@ -199,8 +213,54 @@ async function main() {
     assert(res.status === 400, `status is 400 (got ${res.status})`);
   }
 
-  // 6. PATCH status=approved now that imageUrl is set -> 200
-  console.log("\n6. PATCH status=approved with imageUrl present");
+  // 5c. 2nd image -> appended, not replaced (carrossel format)
+  console.log("\n5c. POST /api/pieces/[id]/image (2nd image, carrossel appends)");
+  {
+    const res = await fetch(`${BASE_URL}/api/pieces/${pieceId}/image`, { method: "POST", body: pngForm("b") });
+    const body = await res.json().catch(() => null);
+    assert(res.status === 200, `status is 200 (got ${res.status})`);
+    assert(Array.isArray(body?.piece?.images) && body.piece.images.length === 2, "piece.images has 2 entries");
+    secondImageId = body?.piece?.images?.[1]?.id;
+    assert(
+      body?.piece?.images?.[0]?.id === firstImageId && body?.piece?.images?.[1]?.id === secondImageId,
+      "images keep upload order (sortOrder 0, 1)",
+    );
+  }
+
+  // 5d. Reorder: swap the two images -> publish order flips
+  console.log("\n5d. PATCH /api/pieces/[id]/image/reorder (swap order)");
+  {
+    const res = await fetch(`${BASE_URL}/api/pieces/${pieceId}/image/reorder`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ imageOrder: [secondImageId, firstImageId] }),
+    });
+    const body = await res.json().catch(() => null);
+    assert(res.status === 200, `status is 200 (got ${res.status})`);
+    assert(
+      body?.piece?.images?.[0]?.id === secondImageId && body?.piece?.images?.[1]?.id === firstImageId,
+      "reorder flips the publish order",
+    );
+  }
+
+  // 5e. Reorder back to the original order, so later steps see a stable order
+  console.log("\n5e. PATCH /api/pieces/[id]/image/reorder (restore order)");
+  {
+    const res = await fetch(`${BASE_URL}/api/pieces/${pieceId}/image/reorder`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ imageOrder: [firstImageId, secondImageId] }),
+    });
+    const body = await res.json().catch(() => null);
+    assert(res.status === 200, `status is 200 (got ${res.status})`);
+    assert(
+      body?.piece?.images?.[0]?.id === firstImageId && body?.piece?.images?.[1]?.id === secondImageId,
+      "reorder restores the original order",
+    );
+  }
+
+  // 6. PATCH status=approved now that the carrossel has 2 images -> 200
+  console.log("\n6. PATCH status=approved with 2 images present");
   {
     const { res, body } = await jsonFetch(`/api/pieces/${pieceId}`, {
       method: "PATCH",
@@ -209,6 +269,16 @@ async function main() {
     });
     assert(res.status === 200, `status is 200 (got ${res.status})`);
     assert(body?.piece?.status === "approved", `piece status is approved (got ${body?.piece?.status})`);
+  }
+
+  // 6a. Images are frozen once approved: upload/delete both -> 409
+  console.log("\n6a. Image mutations on an approved piece -> 409");
+  {
+    const uploadRes = await fetch(`${BASE_URL}/api/pieces/${pieceId}/image`, { method: "POST", body: pngForm("c") });
+    assert(uploadRes.status === 409, `upload status is 409 (got ${uploadRes.status})`);
+
+    const deleteRes = await fetch(`${BASE_URL}/api/pieces/${pieceId}/image/${firstImageId}`, { method: "DELETE" });
+    assert(deleteRes.status === 409, `delete status is 409 (got ${deleteRes.status})`);
   }
 
   // 6b. Unapprove: approved -> draft
@@ -223,15 +293,14 @@ async function main() {
     assert(body?.piece?.status === "draft", `piece status is draft (got ${body?.piece?.status})`);
   }
 
-  // 7. GET /api/pieces lists the created piece
+  // 7. GET /api/pieces lists the created piece with its images
   console.log("\n7. GET /api/pieces?since=6w");
   {
     const { res, body } = await jsonFetch("/api/pieces?since=6w");
     assert(res.status === 200, `status is 200 (got ${res.status})`);
-    assert(
-      Array.isArray(body?.pieces) && body.pieces.some((p) => p.id === pieceId),
-      "list includes the created piece",
-    );
+    const created = body?.pieces?.find((p) => p.id === pieceId);
+    assert(created !== undefined, "list includes the created piece");
+    assert(Array.isArray(created?.images) && created.images.length === 2, "listed piece has its 2 images");
   }
 
   // 8. Stale schedule: approving a piece with publishAt far in the past -> 422

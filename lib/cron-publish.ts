@@ -1,50 +1,47 @@
 import { PieceFormat, PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { checkText, loadRules } from "@/lib/claim-check";
+import { orderedImagesInclude } from "@/lib/piece-images";
 import { getSetting } from "@/lib/settings";
+import { isLocalUploadUrl } from "@/lib/uploads";
 import {
   InstagramApiError,
+  createCarouselContainer,
   createImageContainer,
   createStoryContainer,
   getMediaPermalink,
   publishContainer,
 } from "@/lib/instagram";
 
-// Local dev image uploads (app/api/pieces/[id]/image falls back to
-// public/uploads when BLOB_READ_WRITE_TOKEN is unset) are served under this
-// prefix and are NOT reachable by Meta's servers — only a real host can
-// fetch image_url.
-const LOCAL_UPLOAD_PREFIX = "/uploads/";
-
-type ContainerKind = "image" | "story";
+type ContainerKind = "image" | "carousel" | "story";
 
 type FormatResolution = { kind: ContainerKind } | { kind: "unsupported"; reason: string };
 
-// Maps a Piece.format to the Graph API container it publishes as.
-//
-// v1 simplification: `carrossel` publishes as a single-image post, not a
-// true multi-image carousel — Piece only stores one `imageUrl` today, and
-// lib/instagram.ts's createCarouselContainer (which does support real
-// carousels) is unused until the schema grows an imageUrls[] field. `reels`
-// is not supported at all yet (no video upload in this app), so it always
-// fails with an actionable lastError.
-function resolveContainerKind(format: PieceFormat): FormatResolution {
+// Maps a Piece.format (+ how many images it has) to the Graph API container
+// it publishes as (lib/instagram.ts):
+// - estatico -> single image
+// - stories -> Stories container (first image only — Stories has no
+//   multi-image concept)
+// - carrossel with >=2 images -> true multi-image carousel
+//   (createCarouselContainer); with exactly 1 image, falls back to a plain
+//   image post (flagged via a `note` on the result, not a failure) — this
+//   only happens for a carrossel piece approved before this feature existed,
+//   or a piece that lost images some other way.
+// - reels -> not supported at all yet (no video upload in this app), always
+//   fails with an actionable lastError.
+function resolveContainerKind(format: PieceFormat, imageCount: number): FormatResolution {
   switch (format) {
     case PieceFormat.estatico:
       return { kind: "image" };
     case PieceFormat.stories:
       return { kind: "story" };
     case PieceFormat.carrossel:
-      return { kind: "image" };
+      return { kind: imageCount >= 2 ? "carousel" : "image" };
     case PieceFormat.reels:
       return { kind: "unsupported", reason: "vídeo ainda não suportado" };
     default:
       return { kind: "unsupported", reason: `formato não suportado: ${String(format)}` };
   }
-}
-
-function isLocalUploadUrl(imageUrl: string): boolean {
-  return imageUrl.startsWith(LOCAL_UPLOAD_PREFIX);
 }
 
 export interface PublishResult {
@@ -53,9 +50,11 @@ export interface PublishResult {
   outcome: "published" | "failed" | "skipped";
   containerType?: ContainerKind;
   imageUrl: string | null;
+  imageUrls?: string[];
   igMediaId?: string;
   igPermalink?: string | null;
   error?: string;
+  note?: string;
 }
 
 export interface PublishPayload {
@@ -99,6 +98,7 @@ export async function runPublish(options: { dryRun: boolean }): Promise<PublishP
       igMediaId: null,
     },
     orderBy: { publishAt: "asc" },
+    include: orderedImagesInclude,
   });
 
   const results: PublishResult[] = [];
@@ -117,6 +117,9 @@ export async function runPublish(options: { dryRun: boolean }): Promise<PublishP
   };
 
   for (const piece of pieces) {
+    const imageUrls = piece.images.map((image) => image.url);
+    const firstImageUrl = imageUrls[0] ?? null;
+
     // 1. Re-run claim-check — a caption can be edited after approval never
     // happens today (PATCH requires re-approval), but re-checking here
     // means the cron never trusts a stale claimCheckPassed flag.
@@ -126,38 +129,50 @@ export async function runPublish(options: { dryRun: boolean }): Promise<PublishP
         .map((v) => v.label)
         .join(", ")}`;
       await markFailed(piece.id, message);
-      results.push({ id: piece.id, format: piece.format, outcome: "failed", imageUrl: piece.imageUrl, error: message });
+      results.push({ id: piece.id, format: piece.format, outcome: "failed", imageUrl: firstImageUrl, error: message });
       continue;
     }
 
     // 2. Resolve format -> Graph API container type (reels always fails here).
-    const resolved = resolveContainerKind(piece.format);
+    const resolved = resolveContainerKind(piece.format, imageUrls.length);
     if (resolved.kind === "unsupported") {
       await markFailed(piece.id, resolved.reason);
-      results.push({ id: piece.id, format: piece.format, outcome: "failed", imageUrl: piece.imageUrl, error: resolved.reason });
+      results.push({ id: piece.id, format: piece.format, outcome: "failed", imageUrl: firstImageUrl, error: resolved.reason });
       continue;
     }
 
-    if (!piece.imageUrl) {
-      const message = "imageUrl ausente — peça não deveria estar aprovada sem imagem";
+    if (imageUrls.length === 0) {
+      const message = "nenhuma imagem definida — peça não deveria estar aprovada sem imagem";
       await markFailed(piece.id, message);
-      results.push({ id: piece.id, format: piece.format, outcome: "failed", imageUrl: piece.imageUrl, error: message });
+      results.push({ id: piece.id, format: piece.format, outcome: "failed", imageUrl: firstImageUrl, error: message });
       continue;
     }
+
+    // carrossel approved before this feature existed (or that lost images
+    // some other way) has exactly 1 image at this point — resolveContainerKind
+    // already fell back its kind to "image" above, so it just publishes as a
+    // single-image post; flag that with a note instead of a hard failure.
+    const note =
+      piece.format === PieceFormat.carrossel && resolved.kind === "image"
+        ? "carrossel com apenas 1 imagem — publicado como imagem única, não como carrossel"
+        : undefined;
 
     // 3. Local dev uploads aren't fetchable by Meta. Fine in dry-run
-    // (nothing is actually called), fatal in real mode.
-    const isLocalUrl = isLocalUploadUrl(piece.imageUrl);
-    if (isLocalUrl && !dryRun) {
+    // (nothing is actually called), fatal in real mode. Checks every image
+    // — a carousel is only as reachable as its least reachable slide.
+    const localUrls = imageUrls.filter(isLocalUploadUrl);
+    const hasLocalUrl = localUrls.length > 0;
+    if (hasLocalUrl && !dryRun) {
       const message =
-        "imageUrl local (/uploads/...) não é acessível publicamente pela Meta — configure BLOB_READ_WRITE_TOKEN e reenvie a imagem antes de publicar.";
+        "imageUrl local (/uploads/...) não é acessível publicamente pela Meta — configure BLOB_READ_WRITE_TOKEN e reenvie a(s) imagem(ns) antes de publicar.";
       await markFailed(piece.id, message);
       results.push({
         id: piece.id,
         format: piece.format,
         outcome: "failed",
         containerType: resolved.kind,
-        imageUrl: piece.imageUrl,
+        imageUrl: firstImageUrl,
+        imageUrls,
         error: message,
       });
       continue;
@@ -170,8 +185,10 @@ export async function runPublish(options: { dryRun: boolean }): Promise<PublishP
         format: piece.format,
         outcome: "skipped",
         containerType: resolved.kind,
-        imageUrl: piece.imageUrl,
-        ...(isLocalUrl
+        imageUrl: firstImageUrl,
+        imageUrls,
+        ...(note ? { note } : {}),
+        ...(hasLocalUrl
           ? { error: "aviso: imageUrl local — falharia em modo real sem BLOB_READ_WRITE_TOKEN" }
           : {}),
       });
@@ -184,8 +201,10 @@ export async function runPublish(options: { dryRun: boolean }): Promise<PublishP
     try {
       const containerId =
         resolved.kind === "story"
-          ? await createStoryContainer({ imageUrl: piece.imageUrl })
-          : await createImageContainer({ imageUrl: piece.imageUrl, caption: piece.caption });
+          ? await createStoryContainer({ imageUrl: firstImageUrl! })
+          : resolved.kind === "carousel"
+            ? await createCarouselContainer({ imageUrls, caption: piece.caption })
+            : await createImageContainer({ imageUrl: firstImageUrl!, caption: piece.caption });
 
       const { mediaId } = await publishContainer(containerId);
       const permalink = await getMediaPermalink(mediaId).catch(() => null);
@@ -205,9 +224,11 @@ export async function runPublish(options: { dryRun: boolean }): Promise<PublishP
         format: piece.format,
         outcome: "published",
         containerType: resolved.kind,
-        imageUrl: piece.imageUrl,
+        imageUrl: firstImageUrl,
+        imageUrls,
         igMediaId: mediaId,
         igPermalink: permalink,
+        ...(note ? { note } : {}),
       });
     } catch (error) {
       const message =
@@ -222,7 +243,8 @@ export async function runPublish(options: { dryRun: boolean }): Promise<PublishP
         format: piece.format,
         outcome: "failed",
         containerType: resolved.kind,
-        imageUrl: piece.imageUrl,
+        imageUrl: firstImageUrl,
+        imageUrls,
         error: message,
       });
     }

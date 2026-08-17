@@ -6,6 +6,11 @@ import { useRouter } from "next/navigation";
 import { FormatBadge, StatusBadge } from "@/components/Badges";
 import { publishCountdown } from "@/lib/format";
 
+export interface PieceImageData {
+  id: string;
+  url: string;
+}
+
 export interface PieceCardData {
   id: string;
   pillar: string;
@@ -13,7 +18,7 @@ export interface PieceCardData {
   format: string;
   caption: string;
   imagePrompt: string;
-  imageUrl: string | null;
+  images: PieceImageData[];
   publishAt: string;
   status: string;
 }
@@ -27,9 +32,15 @@ interface ClaimCheckViolation {
 
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_CARROSSEL_IMAGES = 10;
+const MIN_CARROSSEL_IMAGES_TO_APPROVE = 2;
 
 export function PieceCard({ piece }: { piece: PieceCardData }) {
   const router = useRouter();
+
+  const isCarrossel = piece.format === "carrossel";
+  const isDraft = piece.status === "draft";
+  const canMutateImages = isDraft;
 
   const [captionValue, setCaptionValue] = useState(piece.caption);
   // Tracks the last caption we've synced from props, so we can reset the
@@ -59,6 +70,8 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [removingImageId, setRemovingImageId] = useState<string | null>(null);
+  const [reordering, setReordering] = useState(false);
 
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
@@ -67,6 +80,10 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
 
   const captionDirty = captionValue.trim() !== piece.caption && captionValue.trim().length > 0;
   const promptDirty = promptValue.trim() !== piece.imagePrompt && promptValue.trim().length > 0;
+
+  const atCarrosselLimit = isCarrossel && piece.images.length >= MAX_CARROSSEL_IMAGES;
+  const canApprove =
+    piece.images.length >= 1 && (!isCarrossel || piece.images.length >= MIN_CARROSSEL_IMAGES_TO_APPROVE);
 
   async function saveCaption() {
     setSavingCaption(true);
@@ -115,30 +132,37 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
     }
   }
 
-  async function uploadFile(file: File) {
+  async function uploadFiles(files: File[]) {
     setUploadError(null);
 
-    if (!ALLOWED_TYPES.has(file.type)) {
-      setUploadError("Formato não suportado. Envie JPEG, PNG ou WebP.");
-      return;
-    }
-    if (file.size > MAX_BYTES) {
-      setUploadError("Arquivo maior que 8MB.");
-      return;
+    for (const file of files) {
+      if (!ALLOWED_TYPES.has(file.type)) {
+        setUploadError("Formato não suportado. Envie JPEG, PNG ou WebP.");
+        return;
+      }
+      if (file.size > MAX_BYTES) {
+        setUploadError("Arquivo maior que 8MB.");
+        return;
+      }
     }
 
     setUploading(true);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch(`/api/pieces/${piece.id}/image`, {
-        method: "POST",
-        body: formData,
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        setUploadError(body.error ?? "Falha ao enviar a imagem.");
-        return;
+      // Sequential, not parallel: each upload appends/replaces based on the
+      // piece's current image count, so concurrent requests would race on
+      // sortOrder / the single-image replace check.
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch(`/api/pieces/${piece.id}/image`, {
+          method: "POST",
+          body: formData,
+        });
+        const body = await res.json();
+        if (!res.ok) {
+          setUploadError(body.error ?? "Falha ao enviar a imagem.");
+          break;
+        }
       }
       router.refresh();
     } catch {
@@ -149,16 +173,62 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
   }
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files ?? []);
     e.target.value = "";
-    if (file) void uploadFile(file);
+    if (files.length > 0) void uploadFiles(files);
   }
 
   function handleDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragActive(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) void uploadFile(file);
+    const files = Array.from(e.dataTransfer.files ?? []);
+    if (files.length > 0) void uploadFiles(files);
+  }
+
+  async function removeImage(imageId: string) {
+    setUploadError(null);
+    setRemovingImageId(imageId);
+    try {
+      const res = await fetch(`/api/pieces/${piece.id}/image/${imageId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setUploadError(body?.error ?? "Não foi possível remover a imagem.");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setUploadError("Falha de rede ao remover a imagem.");
+    } finally {
+      setRemovingImageId(null);
+    }
+  }
+
+  async function moveImage(index: number, direction: -1 | 1) {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= piece.images.length) return;
+
+    const newOrder = piece.images.map((image) => image.id);
+    [newOrder[index], newOrder[targetIndex]] = [newOrder[targetIndex], newOrder[index]];
+
+    setUploadError(null);
+    setReordering(true);
+    try {
+      const res = await fetch(`/api/pieces/${piece.id}/image/reorder`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ imageOrder: newOrder }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setUploadError(body?.error ?? "Não foi possível reordenar as imagens.");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setUploadError("Falha de rede ao reordenar as imagens.");
+    } finally {
+      setReordering(false);
+    }
   }
 
   async function copyPrompt() {
@@ -193,6 +263,97 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
     }
   }
 
+  const promptEditor = !editingPrompt ? (
+    <>
+      <p className="whitespace-pre-wrap text-sm text-zinc-600">{piece.imagePrompt}</p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={copyPrompt}
+          className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white"
+        >
+          {copied ? "Copiado!" : "Copiar prompt"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditingPrompt(true)}
+          className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+        >
+          Editar
+        </button>
+      </div>
+    </>
+  ) : (
+    <>
+      <textarea
+        value={promptValue}
+        onChange={(e) => setPromptValue(e.target.value)}
+        rows={3}
+        className="w-full resize-none rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
+      />
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={savePrompt}
+          disabled={savingPrompt || !promptDirty}
+          className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+        >
+          {savingPrompt ? "Salvando..." : "Salvar"}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setEditingPrompt(false);
+            setPromptValue(piece.imagePrompt);
+            setPromptError(null);
+          }}
+          disabled={savingPrompt}
+          className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+        >
+          Cancelar
+        </button>
+      </div>
+      {promptError && <p className="text-sm text-red-600">{promptError}</p>}
+    </>
+  );
+
+  const uploadDropzone = canMutateImages && !atCarrosselLimit && (
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragActive(true);
+      }}
+      onDragLeave={() => setDragActive(false)}
+      onDrop={handleDrop}
+      className={`flex items-center justify-center rounded-md border-2 border-dashed p-4 text-sm ${
+        dragActive ? "border-zinc-900 bg-zinc-50" : "border-zinc-300"
+      }`}
+    >
+      <label className="flex w-full cursor-pointer flex-col items-center gap-1 text-center">
+        <span className="font-medium text-zinc-700">
+          {uploading
+            ? "Enviando..."
+            : piece.images.length > 0
+              ? isCarrossel
+                ? "Adicionar imagem"
+                : "Substituir imagem"
+              : "Selecionar imagem"}
+        </span>
+        <span className="text-xs text-zinc-400">
+          ou arraste {isCarrossel ? "arquivos" : "um arquivo"} aqui (JPEG, PNG ou WebP, até 8MB)
+        </span>
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          multiple={isCarrossel}
+          className="hidden"
+          onChange={handleFileChange}
+          disabled={uploading}
+        />
+      </label>
+    </div>
+  );
+
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -203,161 +364,151 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
         </span>
       </div>
 
-      {piece.imageUrl ? (
-        <div className="flex flex-col gap-2">
-          <div className="relative aspect-square w-full overflow-hidden rounded-md bg-zinc-100">
-            {/* eslint-disable-next-line @next/next/no-img-element -- image can come from same-origin /uploads or an arbitrary Vercel Blob host in prod */}
-            <img src={piece.imageUrl} alt="" className="h-full w-full object-cover" />
-          </div>
+      <div className="flex flex-col gap-2">
+        {piece.images.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {piece.images.map((image, index) => (
+                <div key={image.id} className="flex w-20 shrink-0 flex-col gap-1">
+                  <div className="relative aspect-square w-20 overflow-hidden rounded-md bg-zinc-100">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- image can come from same-origin /uploads or an arbitrary Vercel Blob host in prod */}
+                    <img src={image.url} alt="" className="h-full w-full object-cover" />
+                    <span className="absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-900/80 text-xs font-semibold text-white">
+                      {index + 1}
+                    </span>
+                    {canMutateImages && (
+                      <button
+                        type="button"
+                        onClick={() => removeImage(image.id)}
+                        disabled={removingImageId === image.id || uploading || reordering}
+                        aria-label="Remover imagem"
+                        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-600/90 text-xs font-semibold text-white disabled:opacity-50"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                  {canMutateImages && isCarrossel && piece.images.length > 1 && (
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => moveImage(index, -1)}
+                        disabled={index === 0 || reordering || uploading}
+                        aria-label="Mover imagem para a esquerda"
+                        className="flex h-9 flex-1 items-center justify-center rounded-md border border-zinc-300 text-sm font-medium text-zinc-700 disabled:opacity-30"
+                      >
+                        ←
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveImage(index, 1)}
+                        disabled={index === piece.images.length - 1 || reordering || uploading}
+                        aria-label="Mover imagem para a direita"
+                        className="flex h-9 flex-1 items-center justify-center rounded-md border border-zinc-300 text-sm font-medium text-zinc-700 disabled:opacity-30"
+                      >
+                        →
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
 
+            {isCarrossel && (
+              <>
+                <p className="text-xs text-zinc-500">
+                  A ordem das miniaturas é a ordem de publicação do carrossel.
+                </p>
+                <p
+                  className={`text-xs ${
+                    piece.images.length < MIN_CARROSSEL_IMAGES_TO_APPROVE ? "text-amber-700" : "text-zinc-500"
+                  }`}
+                >
+                  {piece.images.length} {piece.images.length === 1 ? "imagem" : "imagens"} (mín.{" "}
+                  {MIN_CARROSSEL_IMAGES_TO_APPROVE} para aprovar — o prompt sugere 4 slides)
+                </p>
+              </>
+            )}
+          </div>
+        )}
+
+        {!canMutateImages && piece.images.length > 0 && (
+          <p className="text-xs text-zinc-400">Imagens congeladas após aprovação.</p>
+        )}
+
+        {atCarrosselLimit && (
+          <p className="text-xs text-zinc-400">Limite de {MAX_CARROSSEL_IMAGES} imagens atingido.</p>
+        )}
+
+        {piece.images.length === 0 && !editingPrompt && (
+          <div className="rounded-md border border-dashed border-zinc-300 p-3 text-sm text-zinc-600">
+            <p className="whitespace-pre-wrap">{piece.imagePrompt}</p>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={copyPrompt}
+                className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white"
+              >
+                {copied ? "Copiado!" : "Copiar prompt"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingPrompt(true)}
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+              >
+                Editar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {piece.images.length === 0 && editingPrompt && (
+          <div className="flex flex-col gap-2">
+            <textarea
+              value={promptValue}
+              onChange={(e) => setPromptValue(e.target.value)}
+              rows={3}
+              className="w-full resize-none rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={savePrompt}
+                disabled={savingPrompt || !promptDirty}
+                className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {savingPrompt ? "Salvando..." : "Salvar"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingPrompt(false);
+                  setPromptValue(piece.imagePrompt);
+                  setPromptError(null);
+                }}
+                disabled={savingPrompt}
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+              >
+                Cancelar
+              </button>
+            </div>
+            {promptError && <p className="text-sm text-red-600">{promptError}</p>}
+          </div>
+        )}
+
+        {piece.images.length > 0 && (
           <details className="rounded-md border border-zinc-200 p-2">
             <summary className="cursor-pointer text-sm font-medium text-zinc-700">
               Ver/editar prompt
             </summary>
-            <div className="mt-2 flex flex-col gap-2">
-              {!editingPrompt ? (
-                <>
-                  <p className="whitespace-pre-wrap text-sm text-zinc-600">{piece.imagePrompt}</p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={copyPrompt}
-                      className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white"
-                    >
-                      {copied ? "Copiado!" : "Copiar prompt"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingPrompt(true)}
-                      className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
-                    >
-                      Editar
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <textarea
-                    value={promptValue}
-                    onChange={(e) => setPromptValue(e.target.value)}
-                    rows={3}
-                    className="w-full resize-none rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={savePrompt}
-                      disabled={savingPrompt || !promptDirty}
-                      className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-                    >
-                      {savingPrompt ? "Salvando..." : "Salvar"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingPrompt(false);
-                        setPromptValue(piece.imagePrompt);
-                        setPromptError(null);
-                      }}
-                      disabled={savingPrompt}
-                      className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                  {promptError && <p className="text-sm text-red-600">{promptError}</p>}
-                </>
-              )}
-            </div>
+            <div className="mt-2 flex flex-col gap-2">{promptEditor}</div>
           </details>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {!editingPrompt ? (
-            <div className="rounded-md border border-dashed border-zinc-300 p-3 text-sm text-zinc-600">
-              <p className="whitespace-pre-wrap">{piece.imagePrompt}</p>
-              <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
-                  onClick={copyPrompt}
-                  className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white"
-                >
-                  {copied ? "Copiado!" : "Copiar prompt"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingPrompt(true)}
-                  className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
-                >
-                  Editar
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <textarea
-                value={promptValue}
-                onChange={(e) => setPromptValue(e.target.value)}
-                rows={3}
-                className="w-full resize-none rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
-              />
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={savePrompt}
-                  disabled={savingPrompt || !promptDirty}
-                  className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-                >
-                  {savingPrompt ? "Salvando..." : "Salvar"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingPrompt(false);
-                    setPromptValue(piece.imagePrompt);
-                    setPromptError(null);
-                  }}
-                  disabled={savingPrompt}
-                  className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
-                >
-                  Cancelar
-                </button>
-              </div>
-              {promptError && <p className="text-sm text-red-600">{promptError}</p>}
-            </div>
-          )}
+        )}
 
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragActive(true);
-            }}
-            onDragLeave={() => setDragActive(false)}
-            onDrop={handleDrop}
-            className={`flex items-center justify-center rounded-md border-2 border-dashed p-4 text-sm ${
-              dragActive ? "border-zinc-900 bg-zinc-50" : "border-zinc-300"
-            }`}
-          >
-            <label className="flex w-full cursor-pointer flex-col items-center gap-1 text-center">
-              <span className="font-medium text-zinc-700">
-                {uploading ? "Enviando..." : "Selecionar imagem"}
-              </span>
-              <span className="text-xs text-zinc-400">
-                ou arraste um arquivo aqui (JPEG, PNG ou WebP, até 8MB)
-              </span>
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="hidden"
-                onChange={handleFileChange}
-                disabled={uploading}
-              />
-            </label>
-          </div>
+        {uploadDropzone}
 
-          {uploadError && <p className="text-sm text-red-600">{uploadError}</p>}
-        </div>
-      )}
+        {uploadError && <p className="text-sm text-red-600">{uploadError}</p>}
+      </div>
 
       <div className="flex flex-col gap-1">
         <label htmlFor={`caption-${piece.id}`} className="text-xs font-medium text-zinc-500">
@@ -412,12 +563,16 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
         ) : (
           <>
             <span className="text-xs text-zinc-400">
-              {piece.imageUrl ? "Pronto para aprovar" : "Envie uma imagem para aprovar"}
+              {canApprove
+                ? "Pronto para aprovar"
+                : piece.images.length === 0
+                  ? "Envie uma imagem para aprovar"
+                  : `Envie mais ${MIN_CARROSSEL_IMAGES_TO_APPROVE - piece.images.length} imagem(ns) para aprovar`}
             </span>
             <button
               type="button"
               onClick={() => setStatus("approved")}
-              disabled={!piece.imageUrl || approving}
+              disabled={!canApprove || approving}
               className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
             >
               {approving ? "Aprovando..." : "Aprovar"}

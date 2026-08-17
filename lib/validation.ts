@@ -35,6 +35,24 @@ export type PatchPieceInput = z.infer<typeof patchPieceSchema>;
 export const ALLOWED_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
+// Per-format image count limits (app/api/pieces/[id]/image/route.ts).
+// carrossel needs at least 2 images to publish as a real Instagram carousel
+// (see docs on lib/instagram.ts's createCarouselContainer); other formats
+// use a single "cover" image, so a second upload replaces the first instead
+// of appending.
+export const MAX_CARROSSEL_IMAGES = 10;
+export const MIN_CARROSSEL_IMAGES_TO_APPROVE = 2;
+
+// PATCH /api/pieces/[id]/image/reorder — reorders the images of a draft
+// piece. imageOrder must contain exactly the same PieceImage ids currently
+// stored for the piece (validated in the route, not here, since it needs a
+// DB read).
+export const reorderImagesSchema = z.object({
+  imageOrder: z.array(z.string().min(1)).min(1, "imageOrder must not be empty"),
+});
+
+export type ReorderImagesInput = z.infer<typeof reorderImagesSchema>;
+
 // PATCH /api/settings — partial update of the pause/kill-switch flags and
 // generation cadence in AppSetting (lib/settings.ts). All fields optional so
 // the Config page can update one control at a time, and the Fila page's

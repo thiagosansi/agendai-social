@@ -12,10 +12,20 @@ draft ──(owner approves + uploads image)──▶ approved ──(daily cron
 ```
 
 - **draft** — created by the AI routine via `POST /api/pieces`. The caption is validated against `docs/promessas-proibidas.json` before it is stored.
-- **approved** — a human (the founder) reviewed the copy and uploaded the image generated from the piece's `imagePrompt`. Nothing is published without this step.
+- **approved** — a human (the founder) reviewed the copy and uploaded the image(s) generated from the piece's `imagePrompt`. Nothing is published without this step.
 - **published** / **failed** — set by the daily publish cron depending on whether the Instagram Graph API call succeeded.
 
 See `docs/02-playbook-conteudo.md` for the full editorial contract (content pillars, anti-repetition rotation, forbidden claims, tone rules) that every generated piece must follow, and `docs/rotina-geracao.md` for the operational guide to configure the weekly scheduled generation routine (prompt to paste, env vars, `/schedule` steps, guard-rails).
+
+### Images
+
+Each `Piece` owns an ordered list of `PieceImage` rows (`sortOrder`, 0-based) instead of a single URL — this is what makes real Instagram carousels possible (see "Publicação" below).
+
+- `POST /api/pieces/[id]/image` (multipart, field `file`) — adds one image. `carrossel` pieces append up to 10; every other format holds a single "cover" image, so a second upload **replaces** the first.
+- `DELETE /api/pieces/[id]/image/[imageId]` — removes one image and resequences the rest.
+- `PATCH /api/pieces/[id]/image/reorder` (`{ imageOrder: string[] }`, the piece's current image ids in the desired order) — sets the publish order. Index 0 is the carousel's first slide.
+- Image mutations (add/remove/reorder) are only allowed while `status=draft`. Once a piece is `approved`, its images are frozen — the queued publish always ships exactly what was reviewed — and these routes return `409`.
+- Approving (`PATCH /api/pieces/[id]` with `status=approved`) requires ≥1 image, and ≥2 for `carrossel` (`422 "Carrossel precisa de pelo menos 2 imagens"` otherwise).
 
 ## Stack
 
@@ -74,12 +84,12 @@ pnpm claim-check --text "Seus clientes marcam horário sozinhos, pelo link."
 1. **Always runs publish** — picks up every `Piece` with `status=approved`, `publishAt <= now` and `igMediaId IS NULL` (the idempotency guard — a piece carrying an `igMediaId` is never reprocessed; only a human reset back to `draft`/`approved` re-queues it). Processes pieces **sequentially** and never lets one failure abort the run — each piece is wrapped individually, so a bad caption, unsupported format, or Meta API error only marks that one piece `failed` (with an actionable `lastError`) and continues to the next.
 
    Format → Graph API container mapping (`lib/instagram.ts`):
-   - `estatico` → single-image post
-   - `stories` → Stories container
-   - `carrossel` → **v1 simplification**: publishes as single-image, not true carousel. `Piece` stores one `imageUrl` today; `createCarouselContainer` is implemented but unused until schema grows `imageUrls[]`.
+   - `estatico` → single-image post (first/only `PieceImage`)
+   - `stories` → Stories container (first/only `PieceImage` — Stories has no multi-image concept)
+   - `carrossel` → **real multi-image carousel** via `createCarouselContainer`: one child container per image (in `sortOrder`), then a parent `CAROUSEL` container referencing all of them. Requires ≥2 images to approve (`PATCH /api/pieces/[id]` returns 422 `"Carrossel precisa de pelo menos 2 imagens"` otherwise). A `carrossel` piece with exactly 1 image (only possible if it was approved before this feature existed) falls back to a single-image post instead of failing, flagged with a `note` in the publish result.
    - `reels` → always fails with `"vídeo ainda não suportado"` — no video upload support yet.
 
-   Before calling Meta, re-runs claim-check on caption (violation fails the piece) and rejects local dev uploads (`imageUrl` starting with `/uploads/`, the fallback `POST /api/pieces/[id]/image` uses when `BLOB_READ_WRITE_TOKEN` is unset) — Meta's servers can't fetch a local URL, so pieces fail with actionable guidance to configure Vercel Blob.
+   Before calling Meta, re-runs claim-check on caption (violation fails the piece) and rejects local dev uploads (any `PieceImage.url` starting with `/uploads/`, the fallback `POST /api/pieces/[id]/image` uses when `BLOB_READ_WRITE_TOKEN` is unset) — Meta's servers can't fetch a local URL, so pieces fail with actionable guidance to configure Vercel Blob. For a carousel this checks every slide — one unreachable image fails the whole piece.
 
 2. **Runs insights on Monday only** (UTC weekday detection) — for every `published` Piece from the last 8 weeks with an `igMediaId`, fetches Instagram insights (`lib/instagram.ts`'s `getMediaInsights`, metric set by `format`: feed/carrossel get `reach/saved/likes/comments/shares/views`, stories get `reach/navigation`) and merges into `Piece.metrics`, preserving existing fields. Pieces published less than 48h ago are skipped (metrics settling), not failed. Also records one `AccountSnapshot` (follower count via `getAccountInfo`) per run, independent of piece updates. Same error-isolation: one piece's Meta API failure only skips that piece. If `META_IG_USER_ID`/`META_IG_TOKEN` aren't configured, returns `200 {"skipped": "credentials not configured"}` — non-fatal.
 

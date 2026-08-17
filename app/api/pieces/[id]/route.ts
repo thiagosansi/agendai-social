@@ -1,8 +1,9 @@
 import type { NextRequest } from "next/server";
-import { Prisma, PieceStatus } from "@prisma/client";
+import { Prisma, PieceFormat, PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { checkText, loadRules } from "@/lib/claim-check";
-import { patchPieceSchema } from "@/lib/validation";
+import { orderedImagesInclude } from "@/lib/piece-images";
+import { MIN_CARROSSEL_IMAGES_TO_APPROVE, patchPieceSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -17,7 +18,7 @@ const STALE_SCHEDULE_MS = 24 * 60 * 60 * 1000;
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  const existing = await prisma.piece.findUnique({ where: { id } });
+  const existing = await prisma.piece.findUnique({ where: { id }, include: orderedImagesInclude });
   if (!existing) {
     return Response.json({ error: "piece not found" }, { status: 404 });
   }
@@ -51,7 +52,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   const effectivePublishAt = publishAt ?? existing.publishAt;
-  const effectiveImageUrl = existing.imageUrl; // never settable through this route
 
   if (status === PieceStatus.approved) {
     if (existing.status !== PieceStatus.draft && existing.status !== PieceStatus.approved) {
@@ -60,9 +60,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         { status: 422 },
       );
     }
-    if (!effectiveImageUrl) {
+    if (existing.images.length === 0) {
       return Response.json(
-        { error: "imageUrl is required before approving — upload one via POST /api/pieces/[id]/image" },
+        { error: "pelo menos uma imagem é necessária antes de aprovar — envie via POST /api/pieces/[id]/image" },
+        { status: 422 },
+      );
+    }
+    if (existing.format === PieceFormat.carrossel && existing.images.length < MIN_CARROSSEL_IMAGES_TO_APPROVE) {
+      return Response.json(
+        { error: "Carrossel precisa de pelo menos 2 imagens" },
         { status: 422 },
       );
     }
@@ -98,7 +104,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     ...(status !== undefined ? { status } : {}),
   };
 
-  const piece = await prisma.piece.update({ where: { id }, data });
+  const piece = await prisma.piece.update({ where: { id }, data, include: orderedImagesInclude });
 
   return Response.json({ piece });
 }

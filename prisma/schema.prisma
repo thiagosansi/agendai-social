@@ -24,9 +24,14 @@ model Piece {
   caption String
   imagePrompt String
 
-  // Set by the founder during approval (POST /api/pieces/[id]/image); never
-  // writable directly through POST/PATCH.
-  imageUrl String?
+  // Uploaded by the founder during approval (POST/DELETE
+  // /api/pieces/[id]/image); never writable directly through POST/PATCH.
+  // Ordered by sortOrder — index 0 is used as the "cover" image everywhere a
+  // single thumbnail is needed (fila list, /publicados). `estatico`/`stories`
+  // hold exactly one image; `carrossel` holds 2-10 (see lib/validation.ts).
+  // Images are mutable only while status=draft — once approved they're
+  // frozen so the queued publish always ships what was reviewed.
+  images PieceImage[]
 
   publishAt DateTime
   status    PieceStatus @default(draft)
@@ -59,6 +64,21 @@ enum PieceStatus {
   approved
   published
   failed
+}
+
+// One uploaded image belonging to a Piece, ordered by sortOrder (0-based,
+// contiguous — POST/DELETE /api/pieces/[id]/image resequence on every
+// mutation). url is either a Vercel Blob URL or a local /uploads/... path
+// (see app/api/pieces/[id]/image/route.ts).
+model PieceImage {
+  id        String   @id @default(cuid())
+  pieceId   String
+  piece     Piece    @relation(fields: [pieceId], references: [id], onDelete: Cascade)
+  url       String
+  sortOrder Int
+  createdAt DateTime @default(now())
+
+  @@index([pieceId, sortOrder])
 }
 
 // One row per weekly insights cron run (app/api/cron/insights/route.ts) —

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { orderedImagesInclude } from "@/lib/piece-images";
 import { PieceCard, type PieceCardData } from "@/components/fila/PieceCard";
 import { ManualRoundButton } from "@/components/fila/ManualRoundButton";
 
@@ -8,6 +9,7 @@ export default async function FilaPage() {
   const pieces = await prisma.piece.findMany({
     where: { status: { in: ["draft", "approved"] } },
     orderBy: { publishAt: "asc" },
+    include: orderedImagesInclude,
   });
 
   const items: PieceCardData[] = pieces.map((piece) => ({
@@ -17,7 +19,7 @@ export default async function FilaPage() {
     format: piece.format,
     caption: piece.caption,
     imagePrompt: piece.imagePrompt,
-    imageUrl: piece.imageUrl,
+    images: piece.images.map((image) => ({ id: image.id, url: image.url })),
     publishAt: piece.publishAt.toISOString(),
     status: piece.status,
   }));

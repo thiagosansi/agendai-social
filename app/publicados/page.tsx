@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { orderedImagesInclude } from "@/lib/piece-images";
 import { FormatBadge, StatusBadge } from "@/components/Badges";
 import { formatDateTimeSP } from "@/lib/format";
 
@@ -24,6 +25,7 @@ export default async function PublicadosPage() {
   const pieces = await prisma.piece.findMany({
     where: { status: { in: ["published", "failed"] } },
     orderBy: { publishAt: "desc" },
+    include: orderedImagesInclude,
   });
 
   return (
@@ -38,6 +40,7 @@ export default async function PublicadosPage() {
         <ul className="flex flex-col gap-4">
           {pieces.map((piece) => {
             const metrics = (piece.metrics as unknown as PieceMetrics | null) ?? {};
+            const coverImageUrl = piece.images[0]?.url ?? null;
 
             return (
               <li key={piece.id} id={`piece-${piece.id}`} className="rounded-lg border border-zinc-200 bg-white p-4">
@@ -49,7 +52,15 @@ export default async function PublicadosPage() {
                   <span className="text-xs text-zinc-500">{formatDateTimeSP(piece.publishAt)}</span>
                 </div>
 
-                <p className="mt-2 line-clamp-3 text-sm text-zinc-700">{piece.caption}</p>
+                <div className="mt-2 flex gap-3">
+                  {coverImageUrl && (
+                    <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md bg-zinc-100">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- image can come from same-origin /uploads or an arbitrary Vercel Blob host in prod */}
+                      <img src={coverImageUrl} alt="" className="h-full w-full object-cover" />
+                    </div>
+                  )}
+                  <p className="line-clamp-3 text-sm text-zinc-700">{piece.caption}</p>
+                </div>
 
                 {piece.status === "failed" && (
                   <div className="mt-2 rounded-md border border-red-300 bg-red-50 p-2 text-sm text-red-700">
