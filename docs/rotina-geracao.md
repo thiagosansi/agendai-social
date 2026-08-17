@@ -100,6 +100,8 @@ Siga estes passos, nesta ordem, sem pular nenhum:
 
    Escolha 2 pilares e 2 segmentos distintos (playbook §2, tabelas de
    pilares e segmentos) que não violem a regra anti-repetição do passo 3.
+   Use os slugs canônicos de pilar/segmento (snake_case) da tabela do
+   playbook §2 — os mesmos já usados nas peças existentes.
    PECAS_POR_RODADA default é 2 — só gere mais se o prompt desta execução
    específica disser explicitamente para subir até 4.
 

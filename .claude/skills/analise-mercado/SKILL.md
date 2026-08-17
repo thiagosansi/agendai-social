@@ -152,6 +152,11 @@ marketing/social media reconhecidos, não fóruns anônimos) para extrair
 tendência de formato, tema recorrente e dor citada — nunca copie o texto
 da fonte, extraia só o *takeaway*.
 
+**`WebFetch` pode estar bloqueado** pelo proxy de egress do ambiente cloud
+(`EGRESS_BLOCKED`) — tente no máximo 2 domínios; se bloqueado, use apenas
+os resumos do `WebSearch` para os `takeaway`s e registre a degradação no
+resumo final (Passo 6) — nunca invente conteúdo de página não lida.
+
 Guarde como `webTrends[{title, url, takeaway}]` — `takeaway` em 1-2 linhas,
 sempre reescrito com suas palavras (nunca colado da fonte).
 
@@ -191,8 +196,8 @@ Monte de 3 a 5 `contentProposals`, cada um com exatamente estes campos
 
 | Campo | Tipo/regra |
 |---|---|
-| `pillar` | string não-vazio — um dos 6 pilares do playbook §2, slug kebab-case já usado no código (`dor-mecanica`, `tela-real-bastidores`, `educacao-gestao`, `objecao-resposta`, `cliente-final`, `equipe`) |
-| `segment` | string não-vazio — um dos 5 segmentos do playbook §2, mesmo slug kebab-case (`salao-barbearia`, `spa-massoterapia`, `studio-unha-cilio-sobrancelha`, `clinica-estetica`, `multi-unidade`) |
+| `pillar` | string não-vazio — um dos 6 pilares do playbook §2, slug `snake_case` já usado no código (`dor_mecanica`, `tela_real_bastidores`, `educacao_gestao`, `objecao_resposta`, `cliente_final`, `equipe`) |
+| `segment` | string não-vazio — um dos 5 segmentos do playbook §2, mesmo slug `snake_case` (`salao_barbearia`, `spa_massoterapia`, `studio_unha_cilio_sobrancelha`, `clinica_estetica`, `multi_unidade`) |
 | `format` | `"carrossel" \| "reels" \| "estatico" \| "stories"` (`PIECE_FORMATS`) |
 | `hook` | string não-vazia — 1ª linha original, ≤125 caracteres visíveis, uma das 8 fórmulas de `agendai-social-strategist` |
 | `captionDraft` | string não-vazia, **máx. 2200 caracteres** — hook → desenvolvimento → mecânica real (`docs/01-produto-referencia.md`) → CTA padrão `agendai.space — 30 dias grátis, sem cartão` → 5-8 hashtags. Máx. 1 emoji. **Deve passar** `node scripts/claim-check.mjs --text "<captionDraft>"` |
@@ -202,10 +207,11 @@ Monte de 3 a 5 `contentProposals`, cada um com exatamente estes campos
 
 Regras da lista completa (não por item):
 
-- `pillar`/`segment` são strings livres no schema (não enum) — a
-  convenção kebab-case acima é a mesma já usada em
-  `scripts/insights-fixture.mjs`; siga-a para o campo permanecer
-  consultável junto com `topCombos`/`rankingPilarFormato`.
+- `pillar`/`segment` são strings livres no schema (não enum), mas **use
+  exatamente os slugs de `docs/02-playbook-conteudo.md` §2 "Slugs
+  canônicos"** — os mesmos que aparecem em `GET /api/pieces?since=6w` —
+  para o campo permanecer consultável junto com
+  `topCombos`/`rankingPilarFormato`.
 - **Pelo menos 1 proposta deliberadamente fora do padrão dominante dos
   concorrentes** (anti-drift/diferenciação — ver o gap identificado no
   Passo 3).
@@ -339,8 +345,8 @@ importando `lib/validation.ts` diretamente:
   },
   "contentProposals": [
     {
-      "pillar": "dor-mecanica",
-      "segment": "salao-barbearia",
+      "pillar": "dor_mecanica",
+      "segment": "salao_barbearia",
       "format": "carrossel",
       "hook": "Toda concorrente na sua região posta foto de salão bonito. Quase nenhuma mostra como a cliente marca sozinha.",
       "captionDraft": "Toda concorrente na sua região posta foto de salão bonito. Quase nenhuma mostra como a cliente marca sozinha.\n\nEnquanto o feed vira vitrine, a dor continua a mesma: mensagem de sexta às 17h perguntando se ainda tem horário.\n\nCom o link público do Agendaí, a cliente vê os horários livres e marca direto, sem esperar sua resposta. Se o serviço pede sinal, ela paga na hora pelo cartão, via Stripe — o valor cai na sua conta, sem comissão do Agendaí.\n\nagendai.space — 30 dias grátis, sem cartão.\n\n#agendaí #salãodebeleza #barbearia #gestãodenegócio #agendamentoonline #donadenegócio",
@@ -349,8 +355,8 @@ importando `lib/validation.ts` diretamente:
       "sources": ["https://www.instagram.com/p/EXEMPLO1/"]
     },
     {
-      "pillar": "cliente-final",
-      "segment": "studio-unha-cilio-sobrancelha",
+      "pillar": "cliente_final",
+      "segment": "studio_unha_cilio_sobrancelha",
       "format": "reels",
       "hook": "POV: a cliente marca o horário sozinha, sem trocar nenhuma mensagem.",
       "captionDraft": "POV: a cliente marca o horário sozinha, sem trocar nenhuma mensagem.\n\nEla abre o link do Agendaí, escolhe o serviço e o horário livre, paga o sinal na hora pelo cartão — e pronto, já tá na agenda.\n\nagendai.space — 30 dias grátis, sem cartão.\n\n#agendaí #estúdiodeunhas #cíliosesobrancelhas #atendimentosozinha #agendamentoonline #gestãodenegócio",

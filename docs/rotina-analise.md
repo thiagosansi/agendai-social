@@ -67,7 +67,9 @@ sem pular nenhum:
     nicho beleza/bem-estar (salão, barbearia, spa, estética) e 2 a 3
     `WebFetch` nas fontes que parecerem mais confiáveis, sempre
     reescrevendo o `takeaway` com suas próprias palavras (nunca colar
-    texto da fonte).
+    texto da fonte). `WebFetch` pode retornar `EGRESS_BLOCKED` no
+    ambiente cloud — se bloqueado, use só os resumos do `WebSearch` para
+    os `takeaway`s e registre a degradação no resumo final.
 
 3. ANALISAR, seguindo `analise-desempenho` (Passo 2):
    - Descarte toda peça com `settling: true` antes de qualquer agregação.
@@ -243,6 +245,7 @@ Esta rotina **não precisa** de `GENERATION_API_TOKEN`, `CRON_SECRET`, `META_IG_
 - **Só dados de mercado públicos, via app ou web pública.** Mercado só entra via `GET /api/analysis/market` (mediado pelo app) ou pesquisa web pública — nunca scraping direto do Instagram, nunca login/automação de navegador contra o Instagram.
 - **Nunca copia frase/hook de concorrente.** Extrai só temas e tipos de hook; `forbiddenClaimHits` de concorrente é sempre anti-exemplo, nunca inspiração; nenhuma proposta cita concorrente (username/@/seguidores).
 - **Cota de mercado.** No máximo 1 chamada a `GET /api/analysis/market` por execução (a cota de hashtags da Meta é 30 buscas únicas/7 dias, com margem de segurança em 25).
+- **Egress limitado no ambiente cloud.** `WebFetch` pode retornar `EGRESS_BLOCKED` para domínios arbitrários; `WebSearch` funciona normalmente — nunca trate um bloqueio de `WebFetch` como falha fatal da rotina, apenas registre a degradação e siga só com os resumos do `WebSearch`.
 
 ---
 

@@ -54,6 +54,27 @@ Se qualquer um desses inputs estiver ausente ou inacessível na hora da execuç�
 
 Salão/barbearia · spa/massoterapia · studio de unha/cílio/sobrancelha · clínica de estética · multi-unidade.
 
+### Slugs canônicos (API)
+
+`snake_case`, minúsculo, sem acento; a regra anti-repetição e as coortes de análise comparam esses slugs literalmente.
+
+| Pilar | Slug |
+|---|---|
+| Dor → mecânica | `dor_mecanica` |
+| Tela real / bastidores do produto | `tela_real_bastidores` |
+| Educação de gestão | `educacao_gestao` |
+| Objeção → resposta | `objecao_resposta` |
+| Cliente final | `cliente_final` |
+| Equipe | `equipe` |
+
+| Segmento | Slug |
+|---|---|
+| Salão/barbearia | `salao_barbearia` |
+| Spa/massoterapia | `spa_massoterapia` |
+| Studio de unha/cílio/sobrancelha | `studio_unha_cilio_sobrancelha` |
+| Clínica de estética | `clinica_estetica` |
+| Multi-unidade | `multi_unidade` |
+
 ### Regra anti-repetição (obrigatória)
 
 - **Pilar + segmento**: a mesma combinação não repete em **6 semanas**. Consulte as peças criadas nas últimas 6 semanas ISO via API antes de escolher.

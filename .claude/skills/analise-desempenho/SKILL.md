@@ -166,7 +166,9 @@ existindo no banco, só não entram em média/ranking desta rodada.
 - **Por pilar+formato**: use `rankingPilarFormato` (já vem pronto, mesma
   fórmula de `lib/report.ts`) — não recalcule à mão.
 - **Por segmento**: agrupe `pieces[]` por `segment`, calcule `avgReach` e
-  engajamento médio (mesma fórmula `engagementOf`) por grupo.
+  engajamento médio (mesma fórmula `engagementOf`) por grupo. Slugs de
+  `pillar`/`segment` são `snake_case` — ver tabela em
+  `docs/02-playbook-conteudo.md` §2 "Slugs canônicos".
 - **Por padrão de hook**: para cada peça, extraia a primeira linha da
   `caption` (até a quebra de linha ou até ~125 caracteres, o que vier
   primeiro) e classifique contra as 8 fórmulas de hook de
