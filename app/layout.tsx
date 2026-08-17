@@ -15,7 +15,13 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Agendaí Social Studio",
-  description: "Instagram content pipeline for Agendaí",
+  description: "Fila de aprovação e publicação do Instagram do Agendaí",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Agendaí Social",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

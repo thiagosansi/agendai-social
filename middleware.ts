@@ -8,7 +8,9 @@ import type { NextRequest } from "next/server";
 // lib/auth.ts) and must stay reachable without this gate — the daily
 // publish cron and the AI generation routine call them directly, with no
 // browser and no Basic Auth header. The matcher below excludes /api, /_next,
-// /uploads (local dev image storage, served as static files) and favicon.ico.
+// /uploads (local dev image storage, served as static files), favicon.ico,
+// manifest.webmanifest, icon.png, apple-icon.png, and /icons/ directory
+// (needed for PWA/mobile app icons to load without auth).
 const REALM = "Agendaí Social Studio";
 
 export function middleware(req: NextRequest) {
@@ -36,5 +38,7 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next|uploads|favicon.ico).*)"],
+  matcher: [
+    "/((?!api|_next|uploads|favicon.ico|manifest.webmanifest|icon.png|apple-icon.png|icons/).*))",
+  ],
 };
