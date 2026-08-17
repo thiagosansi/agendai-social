@@ -3,6 +3,7 @@ import { PieceStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireGenerationToken } from "@/lib/auth";
 import { checkText, loadRules } from "@/lib/claim-check";
+import { notifyPendingApproval, notifySafely } from "@/lib/notifications";
 import { orderedImagesInclude } from "@/lib/piece-images";
 import { setSetting } from "@/lib/settings";
 import { createPieceSchema } from "@/lib/validation";
@@ -116,6 +117,14 @@ export async function POST(req: NextRequest) {
   // forced (Fila "Gerar rodada agora"), a successful generation always
   // resets it so the next report/latest read goes back to computed due math.
   await setSetting("forceNextGeneration", false);
+
+  // A new draft is work waiting on the founder, so this is the moment to
+  // notify. The generation routine posts one piece per request, so a whole
+  // round would fire this several times in a row — notifyPendingApproval
+  // applies its own cooldown and counts the real queue depth, collapsing the
+  // burst into a single "N peças aguardando aprovação". Never allowed to fail
+  // the creation itself.
+  await notifySafely("pending approval", notifyPendingApproval);
 
   return Response.json({ piece }, { status: 201 });
 }

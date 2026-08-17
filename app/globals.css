@@ -11,6 +11,21 @@
   --font-mono: var(--font-geist-mono);
 }
 
+:root {
+  /*
+   * Geometry of the fixed mobile tab bar (components/AppNav.tsx), shared with
+   * the <main> bottom padding in app/layout.tsx so the two stay in sync.
+   *
+   * --app-safe-bottom has a 0.75rem floor because env(safe-area-inset-bottom)
+   * is 0px on every non-notched device (all Android, older iPhones, and any
+   * desktop browser) — without the floor the tab labels sit flush against the
+   * screen edge and read as "cut off". On notched iPhones the inset wins and
+   * lifts the bar above the home indicator.
+   */
+  --app-nav-height: 3.5rem;
+  --app-safe-bottom: max(env(safe-area-inset-bottom), 0.75rem);
+}
+
 body {
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }

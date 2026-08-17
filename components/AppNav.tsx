@@ -39,23 +39,36 @@ export function AppNav() {
         </nav>
       </header>
 
-      {/* Mobile: fixed bottom tab bar with safe-area inset for the iPhone home indicator. */}
+      {/*
+        Mobile: fixed bottom tab bar. The safe-area padding lives below the
+        tab row (not inside it), so the row keeps its full --app-nav-height
+        tap target and the inset only pushes the whole bar up above the iPhone
+        home indicator. See app/globals.css for both custom properties.
+      */}
       <nav
         className="fixed inset-x-0 bottom-0 z-10 border-t border-zinc-200 bg-white md:hidden"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        style={{ paddingBottom: "var(--app-safe-bottom)" }}
       >
-        <div className="grid grid-cols-4">
-          {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium ${
-                isActive(pathname, item.href) ? "text-zinc-900" : "text-zinc-500"
-              }`}
-            >
-              {item.label}
-            </Link>
-          ))}
+        <div className="grid h-[var(--app-nav-height)] grid-cols-4">
+          {NAV_ITEMS.map((item) => {
+            const active = isActive(pathname, item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? "page" : undefined}
+                className={`relative flex h-full items-center justify-center text-[13px] font-medium ${
+                  active ? "text-zinc-900" : "text-zinc-500"
+                }`}
+              >
+                {/* Active marker sits on the top edge, where the bar meets content. */}
+                {active && (
+                  <span className="absolute inset-x-4 top-0 h-0.5 rounded-full bg-zinc-900" />
+                )}
+                {item.label}
+              </Link>
+            );
+          })}
         </div>
       </nav>
     </>

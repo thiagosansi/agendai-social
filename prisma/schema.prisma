@@ -95,6 +95,30 @@ model AccountSnapshot {
   @@index([capturedAt])
 }
 
+// One Web Push subscription — i.e. one browser/device that opted in to
+// notifications on the Config page (POST /api/push/subscribe). This is a
+// single-owner app (see middleware.ts), so there is no user relation: every
+// row is one of the founder's devices and every notification fans out to all
+// of them.
+//
+// `endpoint` is the push service URL the browser hands us and is globally
+// unique per subscription, which makes it the natural upsert key — re-opting
+// in from the same device refreshes the keys instead of creating duplicates.
+// `p256dh`/`auth` are the client's encryption keys, required by the Web Push
+// payload encryption scheme.
+//
+// Rows are pruned automatically when the push service reports the
+// subscription is gone (404/410) — see lib/push.ts.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // Generic key/value settings row, read/written through lib/settings.ts.
 // Boolean keys ("generationPaused", "publishingPaused", "forceNextGeneration")
 // are stored as the string "true"/"false" — an absent row means "false", so

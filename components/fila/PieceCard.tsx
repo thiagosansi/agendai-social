@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { FormatBadge, StatusBadge } from "@/components/Badges";
+import { ImageLightbox } from "@/components/fila/ImageLightbox";
 import { publishCountdown } from "@/lib/format";
 
 export interface PieceImageData {
@@ -72,6 +73,8 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
   const [dragActive, setDragActive] = useState(false);
   const [removingImageId, setRemovingImageId] = useState<string | null>(null);
   const [reordering, setReordering] = useState(false);
+  // Index of the thumbnail being viewed full-screen; null = viewer closed.
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
@@ -371,9 +374,23 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
               {piece.images.map((image, index) => (
                 <div key={image.id} className="flex w-20 shrink-0 flex-col gap-1">
                   <div className="relative aspect-square w-20 overflow-hidden rounded-md bg-zinc-100">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- image can come from same-origin /uploads or an arbitrary Vercel Blob host in prod */}
-                    <img src={image.url} alt="" className="h-full w-full object-cover" />
-                    <span className="absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-900/80 text-xs font-semibold text-white">
+                    {/*
+                      The thumbnail is a button so tapping it opens the
+                      full-screen viewer. The index badge and the remove "×"
+                      are absolutely positioned siblings rendered after it, so
+                      they stack on top and receive their own clicks — no
+                      event-propagation juggling needed.
+                    */}
+                    <button
+                      type="button"
+                      onClick={() => setLightboxIndex(index)}
+                      aria-label={`Ampliar imagem ${index + 1}`}
+                      className="block h-full w-full cursor-zoom-in"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element -- image can come from same-origin /uploads or an arbitrary Vercel Blob host in prod */}
+                      <img src={image.url} alt="" className="h-full w-full object-cover" />
+                    </button>
+                    <span className="pointer-events-none absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-900/80 text-xs font-semibold text-white">
                       {index + 1}
                     </span>
                     {canMutateImages && (
@@ -413,6 +430,8 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
                 </div>
               ))}
             </div>
+
+            <p className="text-xs text-zinc-400">Toque em uma imagem para ampliar.</p>
 
             {isCarrossel && (
               <>
@@ -581,6 +600,13 @@ export function PieceCard({ piece }: { piece: PieceCardData }) {
         )}
       </div>
       {approveError && <p className="text-sm text-red-600">{approveError}</p>}
+
+      <ImageLightbox
+        images={piece.images}
+        index={lightboxIndex}
+        onIndexChange={setLightboxIndex}
+        onClose={() => setLightboxIndex(null)}
+      />
     </div>
   );
 }
