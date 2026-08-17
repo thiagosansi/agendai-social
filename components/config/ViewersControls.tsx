@@ -3,12 +3,28 @@
 import { useState } from "react";
 import { formatDateSP } from "@/lib/format";
 
+// Kept as a local literal union (rather than importing lib/validation's
+// UserRole) — this component only needs the two values, and importing from
+// lib/validation would pull zod into a client bundle for no benefit.
+export type ViewerUserRole = "viewer" | "approver";
+
 export interface ViewerUserData {
   id: string;
   username: string;
+  role: ViewerUserRole;
   active: boolean;
   createdAt: string;
 }
+
+const ROLE_LABELS: Record<ViewerUserRole, string> = {
+  viewer: "Visualizador",
+  approver: "Aprovador",
+};
+
+const ROLE_BADGE_CLASSES: Record<ViewerUserRole, string> = {
+  viewer: "bg-zinc-200 text-zinc-700",
+  approver: "bg-blue-100 text-blue-700",
+};
 
 // Two-step remove: the first click swaps a row's "Remover" button for an
 // inline "Confirmar remoção"/"Cancelar" pair — no window.confirm, and no
@@ -21,6 +37,7 @@ export function ViewersControls({ initialUsers }: { initialUsers: ViewerUserData
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [role, setRole] = useState<ViewerUserRole>("viewer");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -41,6 +58,29 @@ export function ViewersControls({ initialUsers }: { initialUsers: ViewerUserData
       setUsers((current) => current.map((u) => (u.id === user.id ? body.user : u)));
     } catch {
       setRowError("Falha de rede ao atualizar o acesso.");
+    } finally {
+      setPendingId(null);
+    }
+  }
+
+  async function changeRole(user: ViewerUserData, nextRole: ViewerUserRole) {
+    if (nextRole === user.role) return;
+    setPendingId(user.id);
+    setRowError(null);
+    try {
+      const res = await fetch(`/api/users/${user.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: nextRole }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setRowError(body.error ?? "Não foi possível atualizar o papel.");
+        return;
+      }
+      setUsers((current) => current.map((u) => (u.id === user.id ? body.user : u)));
+    } catch {
+      setRowError("Falha de rede ao atualizar o papel.");
     } finally {
       setPendingId(null);
     }
@@ -72,7 +112,7 @@ export function ViewersControls({ initialUsers }: { initialUsers: ViewerUserData
       const res = await fetch("/api/users", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, role }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -82,6 +122,7 @@ export function ViewersControls({ initialUsers }: { initialUsers: ViewerUserData
       setUsers((current) => [...current, body.user]);
       setUsername("");
       setPassword("");
+      setRole("viewer");
     } catch {
       setCreateError("Falha de rede ao criar o acesso.");
     } finally {
@@ -93,9 +134,9 @@ export function ViewersControls({ initialUsers }: { initialUsers: ViewerUserData
     <section className="rounded-lg border border-zinc-200 bg-white p-4">
       <h2 className="font-medium text-zinc-900">Acessos</h2>
       <p className="mt-0.5 text-xs text-zinc-500">
-        Visualizadores entram com usuário e senha, veem todas as telas exceto Config e não
-        conseguem aprovar, editar, gerar ou publicar. Desativar/remover bloqueia o acesso na
-        próxima navegação.
+        Contas entram com usuário e senha e veem todas as telas exceto Config. Visualizador: só
+        leitura. Aprovador/analista: anexa imagens, edita legenda/prompt e aprova/desaprova; não
+        vê Config nem gera rodada. Desativar/remover bloqueia o acesso na próxima navegação.
       </p>
 
       {users.length > 0 && (
@@ -106,8 +147,13 @@ export function ViewersControls({ initialUsers }: { initialUsers: ViewerUserData
             return (
               <li key={user.id} className="flex flex-col gap-2 rounded-md bg-zinc-50 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <span className="truncate text-sm font-medium text-zinc-800">{user.username}</span>
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${ROLE_BADGE_CLASSES[user.role]}`}
+                    >
+                      {ROLE_LABELS[user.role]}
+                    </span>
                     <span
                       className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
                         user.active ? "bg-green-100 text-green-700" : "bg-zinc-200 text-zinc-600"
@@ -141,6 +187,18 @@ export function ViewersControls({ initialUsers }: { initialUsers: ViewerUserData
                     </>
                   ) : (
                     <>
+                      <label className="flex items-center gap-1.5 text-xs text-zinc-600">
+                        Papel
+                        <select
+                          value={user.role}
+                          onChange={(e) => changeRole(user, e.target.value as ViewerUserRole)}
+                          disabled={pending}
+                          className="rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-800 disabled:opacity-50"
+                        >
+                          <option value="viewer">Visualizador</option>
+                          <option value="approver">Aprovador</option>
+                        </select>
+                      </label>
                       <button
                         type="button"
                         onClick={() => toggleActive(user)}
@@ -202,13 +260,32 @@ export function ViewersControls({ initialUsers }: { initialUsers: ViewerUserData
           />
         </div>
 
+        <div className="flex flex-col gap-1">
+          <label htmlFor="new-viewer-role" className="text-sm font-medium text-zinc-800">
+            Papel
+          </label>
+          <select
+            id="new-viewer-role"
+            value={role}
+            onChange={(e) => setRole(e.target.value as ViewerUserRole)}
+            className="rounded-md border border-zinc-300 px-2 py-1.5 text-sm text-zinc-900"
+          >
+            <option value="viewer">Visualizador</option>
+            <option value="approver">Aprovador</option>
+          </select>
+          <p className="text-xs text-zinc-500">
+            Visualizador: só leitura. Aprovador/analista: anexa imagens, edita legenda/prompt e
+            aprova/desaprova; não vê Config nem gera rodada.
+          </p>
+        </div>
+
         <button
           type="button"
           onClick={createUser}
           disabled={creating || !username || !password}
           className="mt-1 self-start rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
         >
-          {creating ? "Criando..." : "Adicionar visualizador"}
+          {creating ? "Criando..." : "Adicionar acesso"}
         </button>
 
         {createError && <p className="text-sm text-red-600">{createError}</p>}

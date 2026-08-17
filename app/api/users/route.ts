@@ -13,9 +13,10 @@ export const dynamic = "force-dynamic";
 const UNIQUE_CONSTRAINT_VIOLATION = "P2002";
 
 // GET /api/users
-// Lists every ViewerUser (id, username, active, createdAt only — never the
-// passwordHash), oldest first, for the Config page's user-management table.
-// Same-origin (lenient, matching login/logout) plus owner-only.
+// Lists every ViewerUser (id, username, role, active, createdAt only —
+// never the passwordHash), oldest first, for the Config page's
+// user-management table. Same-origin (lenient, matching login/logout) plus
+// owner-only.
 export async function GET(req: NextRequest) {
   const originError = requireSameOriginLenient(req);
   if (originError) return originError;
@@ -25,16 +26,17 @@ export async function GET(req: NextRequest) {
 
   const users = await prisma.viewerUser.findMany({
     orderBy: { createdAt: "asc" },
-    select: { id: true, username: true, active: true, createdAt: true },
+    select: { id: true, username: true, role: true, active: true, createdAt: true },
   });
 
   return Response.json({ users });
 }
 
 // POST /api/users
-// Creates a new read-only ViewerUser. Same-origin (lenient) plus
-// owner-only. Rejects a duplicate username with 409 rather than the zod
-// 400s used for shape violations.
+// Creates a new ViewerUser (role "viewer" or "approver", see
+// lib/validation.ts USER_ROLES). Same-origin (lenient) plus owner-only.
+// Rejects a duplicate username with 409 rather than the zod 400s used for
+// shape violations.
 export async function POST(req: NextRequest) {
   const originError = requireSameOriginLenient(req);
   if (originError) return originError;
@@ -57,7 +59,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { username, password } = parsed.data;
+  const { username, password, role } = parsed.data;
 
   const duplicate = await prisma.viewerUser.findUnique({ where: { username } });
   if (duplicate) {
@@ -68,8 +70,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const user = await prisma.viewerUser.create({
-      data: { username, passwordHash },
-      select: { id: true, username: true, active: true, createdAt: true },
+      data: { username, passwordHash, role },
+      select: { id: true, username: true, role: true, active: true, createdAt: true },
     });
 
     return Response.json({ user }, { status: 201 });

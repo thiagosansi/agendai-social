@@ -63,9 +63,10 @@ function NavList({ pathname, items, onNavigate }: NavListProps) {
 interface AppShellProps {
   children: React.ReactNode;
   // The authenticated session's role, or null when unauthenticated (e.g.
-  // /login). Viewers see every nav item except Config — they have no write
-  // access to it (app/config/page.tsx redirects them away regardless).
-  role: "owner" | "viewer" | null;
+  // /login). Non-owners (viewer, approver) see every nav item except
+  // Config — they have no write access to it (app/config/page.tsx
+  // redirects them away regardless).
+  role: "owner" | "approver" | "viewer" | null;
 }
 
 /**
@@ -85,7 +86,7 @@ export function AppShell({ children, role }: AppShellProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
 
-  const navItems = role === "viewer" ? NAV_ITEMS.filter((item) => item.href !== "/config") : NAV_ITEMS;
+  const navItems = role !== "owner" ? NAV_ITEMS.filter((item) => item.href !== "/config") : NAV_ITEMS;
 
   // /login is reachable without a session (that's its whole point), so it
   // must not leak the app's nav — render it standalone, no sidebar/drawer.

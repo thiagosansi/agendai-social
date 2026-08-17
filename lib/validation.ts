@@ -128,6 +128,14 @@ export const usernameSchema = z
 
 export const viewerPasswordSchema = z.string().min(8).max(200);
 
+// ViewerUser.role values (prisma/schema.prisma), kept in sync with
+// lib/session.ts's SessionRole minus "owner" (the owner is not a
+// ViewerUser row). "viewer" is read-only; "approver" gets the full piece
+// workflow (caption/prompt, images, approve/disapprove) but no Config, no
+// manual round, no settings/push/users API.
+export const USER_ROLES = ["viewer", "approver"] as const;
+export type UserRole = (typeof USER_ROLES)[number];
+
 // POST /api/auth/login — accepts both the owner (username "admin") and
 // viewer credentials; usernameSchema's stricter shape/length is enforced
 // separately at viewer-creation time (createViewerUserSchema below), not
@@ -139,19 +147,26 @@ export const loginSchema = z.object({
 
 export type LoginInput = z.infer<typeof loginSchema>;
 
-// POST /api/viewer-users — creates a new read-only ViewerUser (managed on
-// /config by the owner).
+// POST /api/users — creates a new ViewerUser (managed on /config by the
+// owner). `role` defaults to "viewer" (read-only) when omitted.
 export const createViewerUserSchema = z.object({
   username: usernameSchema,
   password: viewerPasswordSchema,
+  role: z.enum(USER_ROLES).optional().default("viewer"),
 });
 
 export type CreateViewerUserInput = z.infer<typeof createViewerUserSchema>;
 
-// PATCH /api/viewer-users/[id] — toggles a ViewerUser's active flag.
-export const patchViewerUserSchema = z.object({
-  active: z.boolean(),
-});
+// PATCH /api/users/[id] — toggles a ViewerUser's active flag and/or changes
+// its role. At least one field must be provided.
+export const patchViewerUserSchema = z
+  .object({
+    active: z.boolean().optional(),
+    role: z.enum(USER_ROLES).optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: "at least one of active, role must be provided",
+  });
 
 export type PatchViewerUserInput = z.infer<typeof patchViewerUserSchema>;
 

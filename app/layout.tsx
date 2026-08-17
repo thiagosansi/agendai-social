@@ -38,19 +38,20 @@ export const metadata: Metadata = {
   },
 };
 
-// Viewer sessions are re-validated against the DB on every request (unlike
-// the owner path, which trusts the signed cookie alone) — a viewer's
-// account can be deactivated or deleted from /config at any time, and the
-// signed cookie has no way to reflect that without re-issuing it. A server
-// component can't clear a cookie itself, so a stale viewer is routed
-// through GET /api/auth/logout (app/api/auth/logout/route.ts), which clears
-// the cookie and *then* redirects to /login — redirecting straight to
-// /login here instead would leave the stale cookie in place and loop
-// forever, since this layout (and its DB check) also wraps /login.
+// Non-owner (viewer/approver) sessions are re-validated against the DB on
+// every request (unlike the owner path, which trusts the signed cookie
+// alone) — a ViewerUser account can be deactivated or deleted from /config
+// at any time, and the signed cookie has no way to reflect that without
+// re-issuing it. A server component can't clear a cookie itself, so a
+// stale session is routed through GET /api/auth/logout
+// (app/api/auth/logout/route.ts), which clears the cookie and *then*
+// redirects to /login — redirecting straight to /login here instead would
+// leave the stale cookie in place and loop forever, since this layout (and
+// its DB check) also wraps /login.
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   const session = await getSession();
 
-  if (session?.role === "viewer") {
+  if (session && session.role !== "owner") {
     const viewer = await prisma.viewerUser.findUnique({
       where: { username: session.username },
       select: { active: true },

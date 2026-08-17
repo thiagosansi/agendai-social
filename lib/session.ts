@@ -3,11 +3,15 @@ import type { NextRequest } from "next/server";
 // Cookie-session helpers for the approval web UI, edge-safe (Web Crypto
 // only — no Node `crypto`, since middleware.ts runs on the edge runtime).
 //
-// v2 adds a `role` (owner | viewer) and `username` to the token so the
-// same cookie can represent either the single owner (username "admin",
-// authenticated against APP_PASSWORD) or a read-only ViewerUser row
-// (prisma/schema.prisma, authenticated against a scrypt hash — see
-// lib/passwords.ts). The token is still not a random, server-stored value —
+// v2 adds a `role` (owner | approver | viewer) and `username` to the token
+// so the same cookie can represent either the single owner (username
+// "admin", authenticated against APP_PASSWORD) or a non-owner ViewerUser
+// row (prisma/schema.prisma, authenticated against a scrypt hash — see
+// lib/passwords.ts). "approver" is a ViewerUser with full piece-editing
+// rights (edit caption/prompt, images, approve/disapprove) but no Config,
+// no manual round, and no settings/push/users API access — see
+// requirePieceEditor below. The token is still not a random, server-stored
+// value —
 // it is a timestamped HMAC keyed by APP_PASSWORD itself:
 // `${exp}.${role}.${username}.${hex(HMAC)}`. That means there is still no
 // session store to manage for the owner path: any request presenting a
@@ -37,7 +41,7 @@ export const VIEWER_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // ~30 days
 
 const SESSION_MESSAGE_PREFIX = "agendai-social-session-v2:";
 
-export type SessionRole = "owner" | "viewer";
+export type SessionRole = "owner" | "approver" | "viewer";
 
 export interface Session {
   role: SessionRole;
@@ -51,7 +55,7 @@ export interface Session {
 // the middleware bundle unnecessarily.
 const VIEWER_USERNAME_PATTERN = /^[a-z0-9._]{3,30}$/;
 
-function maxAgeForRole(role: SessionRole): number {
+export function maxAgeForRole(role: SessionRole): number {
   return role === "owner" ? OWNER_SESSION_MAX_AGE_SECONDS : VIEWER_SESSION_MAX_AGE_SECONDS;
 }
 
@@ -137,7 +141,7 @@ export async function verifySessionToken(
   if (!Number.isSafeInteger(expiresAtEpochSeconds)) return null;
   if (expiresAtEpochSeconds < Math.floor(Date.now() / 1000)) return null;
 
-  if (roleRaw !== "owner" && roleRaw !== "viewer") return null;
+  if (roleRaw !== "owner" && roleRaw !== "approver" && roleRaw !== "viewer") return null;
   const role: SessionRole = roleRaw;
 
   const usernameIsValid =
@@ -182,22 +186,42 @@ export async function getSessionFromRequest(req: NextRequest): Promise<Session |
   return verifySessionToken(token, expectedPassword);
 }
 
-// Owner-only route guard for API routes (Node runtime). Returns a Response
-// to short-circuit the caller when access must be denied, or null when the
-// request is an authenticated owner and should proceed:
-//   - no/invalid session -> 401 { error: "unauthorized" }
-//   - viewer session      -> 403 { error: "somente leitura" }
-//   - owner session        -> null (proceed)
-export async function requireOwner(req: NextRequest): Promise<Response | null> {
+// Generic role-gated route guard for API routes (Node runtime). Returns a
+// Response to short-circuit the caller when access must be denied, or null
+// when the request's session role is in `allowed` and the caller should
+// proceed:
+//   - no/invalid session         -> 401 { error: "unauthorized" }
+//   - session role not allowed   -> 403 { error: "sem permissão" }
+//   - session role allowed       -> null (proceed)
+export async function requireRole(
+  req: NextRequest,
+  allowed: SessionRole[],
+): Promise<Response | null> {
   const session = await getSessionFromRequest(req);
 
   if (!session) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  if (session.role !== "owner") {
-    return Response.json({ error: "somente leitura" }, { status: 403 });
+  if (!allowed.includes(session.role)) {
+    return Response.json({ error: "sem permissão" }, { status: 403 });
   }
 
   return null;
+}
+
+// Owner-only route guard — Config, settings, push and user-management
+// routes. Delegates to requireRole; kept as its own export since it's the
+// far more common case and reads better at call sites than
+// `requireRole(req, ["owner"])`.
+export async function requireOwner(req: NextRequest): Promise<Response | null> {
+  return requireRole(req, ["owner"]);
+}
+
+// Piece-editing route guard — owner or approver. Covers PATCH
+// /api/pieces/[id] and the image upload/delete/reorder routes: full piece
+// workflow (caption/prompt, images, approve/disapprove), but not Config,
+// manual round, or settings/push/users, which stay requireOwner.
+export async function requirePieceEditor(req: NextRequest): Promise<Response | null> {
+  return requireRole(req, ["owner", "approver"]);
 }

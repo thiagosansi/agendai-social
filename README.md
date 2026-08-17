@@ -75,20 +75,22 @@ dos dois, uma navegação de página (`Accept: text/html`) é redirecionada para
 `/login?next=...`; qualquer outra requisição (curl sem esse header, scripts)
 continua recebendo `401` + `WWW-Authenticate` como antes.
 
-Existem dois papéis. **Dono**: usuário `admin` + `APP_PASSWORD`, sessão de
-180 dias. **Visualizador**: cadastrado em Config → "Acessos" (usuário
-3–30 chars `[a-z0-9._]`, senha ≥8, hash scrypt), sessão de 30 dias — vê tudo
-exceto Config e não pode mutar (a API responde `403 somente leitura`).
-Desativar/remover um visualizador bloqueia o acesso na próxima navegação
-(o layout confere o status no banco) e as sessões expiram sozinhas em
-30 dias; **rotacionar `APP_PASSWORD` invalida todas as sessões** (dono e
-visualizadores) imediatamente, junto com o Basic Auth. Todas as rotas de
-mutação usadas pela UI (`PATCH /api/pieces/:id`, upload/reorder/delete de
-imagem, `PATCH /api/settings`, push, `/api/users`) agora exigem sessão de
-dono — antes as rotas de peça/imagem não tinham nenhuma checagem de auth.
-Basic Auth continua aceito para curl (como dono). Para sair de uma sessão
-específica sem trocar a senha, use **Config → Sessão → Sair**, que limpa o
-cookie deste aparelho.
+Existem três papéis. **Dono**: usuário `admin` + `APP_PASSWORD`, sessão de
+180 dias, acesso total. **Aprovador**: cadastrado em Config → "Acessos"
+(usuário 3–30 chars `[a-z0-9._]`, senha ≥8, hash scrypt), sessão de 30 dias —
+fluxo completo de peça (edita legenda/prompt, envia/remove/reordena imagens,
+aprova/desaprova), mas sem Config, sem "Gerar rodada agora" e sem acesso a
+`/api/settings`, push ou `/api/users`. **Visualizador**: mesmo cadastro e
+sessão de 30 dias, mas somente leitura — vê tudo exceto Config e não pode
+mutar nada (a API responde `403 sem permissão`). Desativar/remover uma conta
+bloqueia o acesso na próxima navegação (o layout confere o status no banco) e
+as sessões expiram sozinhas em 30 dias; **rotacionar `APP_PASSWORD` invalida
+todas as sessões** (dono, aprovador e visualizador) imediatamente, junto com
+o Basic Auth. `PATCH /api/pieces/:id` e as rotas de imagem (upload/reorder/
+delete) aceitam dono ou aprovador; `PATCH /api/settings`, push e `/api/users`
+continuam exigindo dono. Basic Auth continua aceito para curl (como dono).
+Para sair de uma sessão específica sem trocar a senha, use
+**Config → Sessão → Sair**, que limpa o cookie deste aparelho.
 
 ## Notificações
 

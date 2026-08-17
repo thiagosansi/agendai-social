@@ -3,7 +3,7 @@ import { DEFAULT_GENERATION_INTERVAL_WEEKS, getMarketConfig, getSetting, getSett
 import { PauseControls } from "@/components/config/PauseControls";
 import { NotificationControls } from "@/components/config/NotificationControls";
 import { MarketControls } from "@/components/config/MarketControls";
-import { ViewersControls } from "@/components/config/ViewersControls";
+import { ViewersControls, type ViewerUserRole } from "@/components/config/ViewersControls";
 import { LogoutButton } from "@/components/config/LogoutButton";
 import { tokenStatus, type TokenLevel } from "@/lib/meta-token";
 import { prisma } from "@/lib/prisma";
@@ -30,7 +30,7 @@ const LEVEL_CLASSES: Record<TokenLevel, string> = {
 
 export default async function ConfigPage() {
   const session = await getSession();
-  if (session?.role === "viewer") redirect("/");
+  if (session?.role !== "owner") redirect("/");
 
   const status = tokenStatus(process.env.META_TOKEN_EXPIRES_AT);
   const [generationPaused, publishingPaused, generationIntervalWeeksRaw, marketConfig, viewerUsers] = await Promise.all([
@@ -40,11 +40,18 @@ export default async function ConfigPage() {
     getMarketConfig(),
     prisma.viewerUser.findMany({
       orderBy: { createdAt: "asc" },
-      select: { id: true, username: true, active: true, createdAt: true },
+      select: { id: true, username: true, role: true, active: true, createdAt: true },
     }),
   ]);
 
-  const users = viewerUsers.map((user) => ({ ...user, createdAt: user.createdAt.toISOString() }));
+  // viewerUsers[].role is a plain DB string, not the ViewerUserRole union —
+  // normalize any unexpected stored value to "viewer" (same fallback as
+  // app/api/auth/login/route.ts) rather than widening the prop type.
+  const users = viewerUsers.map((user) => ({
+    ...user,
+    role: (user.role === "approver" ? "approver" : "viewer") as ViewerUserRole,
+    createdAt: user.createdAt.toISOString(),
+  }));
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-4 sm:py-6">

@@ -79,8 +79,13 @@ export async function POST(req: NextRequest) {
     return fail();
   }
 
-  const token = await createSessionToken(expectedPassword, "viewer", viewer.username);
-  const response = NextResponse.json({ ok: true, role: "viewer" });
-  response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions("viewer"));
+  // viewer.role is a plain DB string, not the SessionRole union — fall back
+  // to "viewer" for any unexpected value rather than letting it flow into
+  // createSessionToken/sessionCookieOptions untyped.
+  const role: "approver" | "viewer" = viewer.role === "approver" ? "approver" : "viewer";
+
+  const token = await createSessionToken(expectedPassword, role, viewer.username);
+  const response = NextResponse.json({ ok: true, role });
+  response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions(role));
   return response;
 }

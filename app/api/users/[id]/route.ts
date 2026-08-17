@@ -12,10 +12,12 @@ export const dynamic = "force-dynamic";
 const RECORD_NOT_FOUND = "P2025";
 
 // PATCH /api/users/[id]
-// Toggles a ViewerUser's active flag (deactivating a viewer immediately
-// blocks new logins; app/layout.tsx also re-checks `active` on every
-// request and clears an existing session if it flips to false). Same-origin
-// (lenient) plus owner-only.
+// Updates a ViewerUser's active flag and/or role (deactivating an account
+// immediately blocks new logins; app/layout.tsx also re-checks `active` on
+// every request and clears an existing session if it flips to false —
+// changing `role` alone does NOT force out an existing session, since the
+// role lives in the signed cookie itself and only takes effect on the next
+// login). Same-origin (lenient) plus owner-only.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const originError = requireSameOriginLenient(req);
   if (originError) return originError;
@@ -40,11 +42,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     );
   }
 
+  const { active, role } = parsed.data;
+
   try {
     const user = await prisma.viewerUser.update({
       where: { id },
-      data: { active: parsed.data.active },
-      select: { id: true, username: true, active: true, createdAt: true },
+      data: {
+        ...(active !== undefined ? { active } : {}),
+        ...(role !== undefined ? { role } : {}),
+      },
+      select: { id: true, username: true, role: true, active: true, createdAt: true },
     });
 
     return Response.json({ user });

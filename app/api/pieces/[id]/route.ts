@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { Prisma, PieceFormat, PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireOwner } from "@/lib/session";
+import { requirePieceEditor } from "@/lib/session";
 import { checkText, loadRules } from "@/lib/claim-check";
 import { orderedImagesInclude } from "@/lib/piece-images";
 import { MIN_CARROSSEL_IMAGES_TO_APPROVE, patchPieceSchema } from "@/lib/validation";
@@ -14,10 +14,12 @@ const STALE_SCHEDULE_MS = 24 * 60 * 60 * 1000;
 // Updates caption, publishAt and/or status. Status transitions accepted here:
 // draft <-> approved, and failed -> draft (recovery after a failed publish
 // attempt). published is exclusively set by the daily publish cron, and the
-// zod schema rejects any other status value before we get here. Owner-only
-// (lib/session.ts requireOwner) — this route was previously unauthenticated.
+// zod schema rejects any other status value before we get here.
+// Owner/approver only (lib/session.ts requirePieceEditor) — this route was
+// previously unauthenticated, then owner-only; approvers now share full
+// piece-editing rights with the owner.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const authError = await requireOwner(req);
+  const authError = await requirePieceEditor(req);
   if (authError) return authError;
 
   const { id } = await params;

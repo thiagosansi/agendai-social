@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireOwner } from "@/lib/session";
+import { requirePieceEditor } from "@/lib/session";
 import { orderedImagesInclude } from "@/lib/piece-images";
 import { reorderImagesSchema } from "@/lib/validation";
 
@@ -14,10 +14,11 @@ export const runtime = "nodejs";
 // any payload that isn't exactly the same id set the piece currently has
 // (no partial reorders, no smuggling in another piece's image id). Only
 // allowed while status=draft — same freeze-after-approval rule as
-// POST/DELETE .../image. Owner-only (lib/session.ts requireOwner) — this
-// route was previously unauthenticated.
+// POST/DELETE .../image. Owner/approver only (lib/session.ts
+// requirePieceEditor) — this route was previously unauthenticated, then
+// owner-only.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const authError = await requireOwner(req);
+  const authError = await requirePieceEditor(req);
   if (authError) return authError;
 
   const { id } = await params;

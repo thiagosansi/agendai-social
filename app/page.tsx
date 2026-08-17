@@ -47,7 +47,7 @@ function excerptSummary(markdown: string, maxChars = 280): string {
 
 export default async function Home() {
   const session = await getSession();
-  const isViewer = session?.role === "viewer";
+  const isOwner = session?.role === "owner";
 
   const now = new Date();
   const in7Days = new Date(now.getTime() + SEVEN_DAYS_MS);
@@ -117,7 +117,7 @@ export default async function Home() {
     alerts.push({
       level: meta.level,
       message: `Token do Instagram: ${meta.message}`,
-      ...(!isViewer && { href: "/config", linkLabel: "Configurações" }),
+      ...(isOwner && { href: "/config", linkLabel: "Configurações" }),
     });
   }
 
@@ -126,7 +126,7 @@ export default async function Home() {
     alerts.push({
       level: "amber",
       message: "Notificações push não configuradas (VAPID ausente).",
-      ...(!isViewer && { href: "/config", linkLabel: "Configurações" }),
+      ...(isOwner && { href: "/config", linkLabel: "Configurações" }),
     });
   }
 
@@ -144,7 +144,7 @@ export default async function Home() {
     alerts.push({
       level: "info",
       message: "Geração de conteúdo está pausada.",
-      ...(!isViewer && { href: "/config", linkLabel: "Configurações" }),
+      ...(isOwner && { href: "/config", linkLabel: "Configurações" }),
     });
   }
 
@@ -152,7 +152,7 @@ export default async function Home() {
     alerts.push({
       level: "info",
       message: "Publicação está pausada.",
-      ...(!isViewer && { href: "/config", linkLabel: "Configurações" }),
+      ...(isOwner && { href: "/config", linkLabel: "Configurações" }),
     });
   }
 
@@ -249,7 +249,7 @@ export default async function Home() {
           )}
         </SectionCard>
 
-        <SectionCard title="Rotinas" {...(!isViewer && { href: "/config", linkLabel: "Configurações →" })}>
+        <SectionCard title="Rotinas" {...(isOwner && { href: "/config", linkLabel: "Configurações →" })}>
           <ul className="flex flex-col gap-3 text-sm">
             <li className="rounded-md bg-zinc-50 p-3">
               <div className="flex items-center justify-between gap-2">

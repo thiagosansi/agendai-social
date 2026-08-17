@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function FilaPage() {
   const session = await getSession();
   const readOnly = session?.role === "viewer";
+  const isOwner = session?.role === "owner";
 
   const pieces = await prisma.piece.findMany({
     where: { status: { in: ["draft", "approved"] } },
@@ -32,7 +33,7 @@ export default async function FilaPage() {
     <div className="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-4 sm:py-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold text-zinc-900">Fila</h1>
-        {!readOnly && <ManualRoundButton />}
+        {isOwner && <ManualRoundButton />}
       </div>
 
       {items.length === 0 ? (

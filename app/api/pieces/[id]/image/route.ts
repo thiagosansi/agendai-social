@@ -4,7 +4,7 @@ import path from "node:path";
 import { put } from "@vercel/blob";
 import { PieceFormat, PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireOwner } from "@/lib/session";
+import { requirePieceEditor } from "@/lib/session";
 import { orderedImagesInclude } from "@/lib/piece-images";
 import { deleteLocalUploadFile } from "@/lib/uploads";
 import { ALLOWED_IMAGE_CONTENT_TYPES, MAX_CARROSSEL_IMAGES, MAX_IMAGE_BYTES } from "@/lib/validation";
@@ -22,14 +22,15 @@ const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
 // MAX_CARROSSEL_IMAGES, appended in upload order (sortOrder = current
 // count); every other format holds a single "cover" image, so a second
 // upload REPLACES the first (old PieceImage row deleted, and its local file
-// removed if it was a /uploads/... upload). Owner-only (lib/session.ts
-// requireOwner) — this route was previously unauthenticated.
+// removed if it was a /uploads/... upload). Owner/approver only
+// (lib/session.ts requirePieceEditor) — this route was previously
+// unauthenticated, then owner-only.
 //
 // Only allowed while status=draft: once a piece is approved its images are
 // frozen, so the queued publish always ships exactly what was reviewed
 // (DELETE and the reorder route below enforce the same rule).
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const authError = await requireOwner(req);
+  const authError = await requirePieceEditor(req);
   if (authError) return authError;
 
   const { id } = await params;
