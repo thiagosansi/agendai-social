@@ -51,7 +51,7 @@ pnpm dev
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | Local/production Postgres connection string. Local dev uses port **5433** (5432 is used by the main `agendatmstudio` product's local DB). |
-| `APP_PASSWORD` | Shared password gate for the approval web UI (single-owner tool, no multi-user auth yet). |
+| `APP_PASSWORD` | Shared password gate for the approval web UI (single-owner tool, no multi-user auth yet). Used both for the `/login` cookie session and the HTTP Basic Auth fallback. |
 | `GENERATION_API_TOKEN` | Bearer token the AI generation routine sends when calling `POST /api/pieces`. |
 | `ANALYSIS_API_TOKEN` | Bearer token the analysis routine sends when calling `POST /api/analysis`. `GET /api/analysis/latest` also accepts `GENERATION_API_TOKEN`. |
 | `CRON_SECRET` | Shared secret the daily publish cron must present to trigger a run. |
@@ -62,6 +62,25 @@ pnpm dev
 | `VAPID_PUBLIC_KEY` | Public half of the Web Push key pair. Served to the browser by `GET /api/push/subscribe`. |
 | `VAPID_PRIVATE_KEY` | Private half of the Web Push key pair — signs push requests, never leaves the server. |
 | `VAPID_SUBJECT` | Contact string required by the Web Push spec, e.g. `mailto:voce@exemplo.com`. |
+
+## Autenticação
+
+A UI usa uma sessão em cookie (`/login`) em vez de depender só de HTTP Basic
+Auth. Motivo: PWAs instalados na tela de início do iOS (modo standalone)
+nunca exibem o prompt nativo do Basic Auth — o app instalado ficava preso em
+"Authentication required." sem forma de digitar a senha. `middleware.ts`
+agora aceita, nesta ordem: (1) o cookie de sessão, (2) o header
+`Authorization: Basic` (mantido para curl/scripts existentes). Sem nenhum
+dos dois, uma navegação de página (`Accept: text/html`) é redirecionada para
+`/login?next=...`; qualquer outra requisição (curl sem esse header, scripts)
+continua recebendo `401` + `WWW-Authenticate` como antes.
+
+O cookie de sessão (`lib/session.ts`) é um HMAC-SHA256 de `APP_PASSWORD` com
+uma expiração embutida (~180 dias) — não existe um store de sessões
+separado, então **rotacionar `APP_PASSWORD` invalida todas as sessões
+existentes** imediatamente, junto com o Basic Auth. Para sair de uma sessão
+específica sem trocar a senha, use **Config → Sessão → Sair**, que limpa o
+cookie deste aparelho.
 
 ## Notificações
 

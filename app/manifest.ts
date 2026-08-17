@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: "Agendaí Social",
     description:
       "Fila de aprovação e publicação do Instagram do Agendaí",
-    start_url: "/fila",
+    start_url: "/",
     scope: "/",
     display: "standalone",
     background_color: "#ffffff",

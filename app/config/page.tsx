@@ -2,6 +2,7 @@ import { DEFAULT_GENERATION_INTERVAL_WEEKS, getMarketConfig, getSetting, getSett
 import { PauseControls } from "@/components/config/PauseControls";
 import { NotificationControls } from "@/components/config/NotificationControls";
 import { MarketControls } from "@/components/config/MarketControls";
+import { LogoutButton } from "@/components/config/LogoutButton";
 import { tokenStatus, type TokenLevel } from "@/lib/meta-token";
 
 export const dynamic = "force-dynamic";
@@ -103,6 +104,16 @@ export default async function ConfigPage() {
           <li>docs/02-playbook-conteudo.md — contrato editorial (pilares, segmentos, rotação)</li>
           <li>docs/01-produto-referencia.md — referência de produto usada pela geração de conteúdo</li>
         </ul>
+      </section>
+
+      <section className="rounded-lg border border-zinc-200 bg-white p-4">
+        <h2 className="font-medium text-zinc-900">Sessão</h2>
+        <p className="mt-1 text-sm text-zinc-500">
+          Encerra a sessão neste aparelho e volta para a tela de login.
+        </p>
+        <div className="mt-3">
+          <LogoutButton />
+        </div>
       </section>
     </div>
   );

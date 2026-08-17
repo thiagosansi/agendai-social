@@ -80,6 +80,10 @@ export function AppShell({ children }: AppShellProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
 
+  // /login is reachable without a session (that's its whole point), so it
+  // must not leak the app's nav — render it standalone, no sidebar/drawer.
+  const isLoginPage = pathname === "/login";
+
   // Close the drawer whenever the route changes (link click already closes
   // it via onNavigate, but this also covers back/forward navigation). Adjusted
   // during render rather than in an effect — same pattern used for the synced
@@ -117,6 +121,10 @@ export function AppShell({ children }: AppShellProps) {
     dialog.addEventListener("close", handleClose);
     return () => dialog.removeEventListener("close", handleClose);
   }, []);
+
+  if (isLoginPage) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="flex min-h-full">

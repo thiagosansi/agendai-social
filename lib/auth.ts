@@ -95,3 +95,22 @@ export function requireSameOrigin(req: NextRequest): Response | null {
   }
   return null;
 }
+
+/**
+ * Lenient same-origin guard for the login/logout routes. Older Safari/PWA
+ * contexts may omit Fetch Metadata headers entirely, so this also accepts
+ * a matching `Origin` header as a fallback — keeping login working there
+ * while still rejecting cross-site POSTs (Origin, when present, is not
+ * spoofable by browsers on simple/CORS requests).
+ */
+export function requireSameOriginLenient(req: NextRequest): Response | null {
+  const secFetchSite = req.headers.get("sec-fetch-site");
+  const origin = req.headers.get("origin");
+  const sameOriginBySecFetch = secFetchSite === "same-origin";
+  const sameOriginByOrigin = !!origin && origin === req.nextUrl.origin;
+
+  if (!sameOriginBySecFetch && !sameOriginByOrigin) {
+    return Response.json({ error: "cross-origin request rejected" }, { status: 403 });
+  }
+  return null;
+}
