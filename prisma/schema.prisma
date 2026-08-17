@@ -16,12 +16,12 @@ datasource db {
 // and the segment rotation) rather than enums, since that rotation is
 // expected to evolve without a schema migration.
 model Piece {
-  id     String @id @default(cuid())
-  pillar String
+  id      String @id @default(cuid())
+  pillar  String
   segment String
 
-  format  PieceFormat
-  caption String
+  format      PieceFormat
+  caption     String
   imagePrompt String
 
   // Uploaded by the founder during approval (POST/DELETE
@@ -38,9 +38,9 @@ model Piece {
 
   // Set only by the daily publish cron (a later task) after a successful
   // Instagram Graph API call.
-  igMediaId    String?
-  igPermalink  String?
-  metrics      Json?
+  igMediaId   String?
+  igPermalink String?
+  metrics     Json?
 
   claimCheckPassed Boolean @default(false)
   lastError        String?
@@ -117,6 +117,29 @@ model PushSubscription {
   userAgent String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// One row per analysis report — a periodic (or on-demand) AI-generated
+// review of recent performance, written via POST /api/analysis and read via
+// GET /api/analysis/latest. `insights`/`recommendations` are structured JSON
+// (validated shapes live in lib/validation.ts's createAnalysisReportSchema)
+// so the generation routine can consume them programmatically, while
+// `summaryMarkdown` carries the same analysis as prose for display.
+// `source` distinguishes a routine (scheduled) run from a manual/ad-hoc one;
+// `schemaVersion` lets the insights/recommendations JSON shape evolve later
+// without a migration.
+model AnalysisReport {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  periodStart     DateTime
+  periodEnd       DateTime
+  summaryMarkdown String
+  insights        Json
+  recommendations Json
+  source          String   @default("routine")
+  schemaVersion   Int      @default(1)
+
+  @@index([createdAt])
 }
 
 // Generic key/value settings row, read/written through lib/settings.ts.

@@ -1,5 +1,13 @@
 import type { NextRequest } from "next/server";
 
+// Extracts the bearer token from an Authorization header, or null if the
+// header is missing or not a `Bearer <token>` value. Shared by every
+// token-guard below so the parsing logic lives in one place.
+function bearerFrom(req: NextRequest): string | null {
+  const header = req.headers.get("authorization");
+  return header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : null;
+}
+
 /**
  * Bearer-token guard for the AI generation routine (POST /api/pieces only).
  *
@@ -10,10 +18,46 @@ import type { NextRequest } from "next/server";
  */
 export function requireGenerationToken(req: NextRequest): Response | null {
   const expected = process.env.GENERATION_API_TOKEN;
-  const header = req.headers.get("authorization");
-  const provided = header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : null;
+  const provided = bearerFrom(req);
 
   if (!expected || !provided || provided !== expected) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  return null;
+}
+
+/**
+ * Bearer-token guard for the analysis report API (POST /api/analysis).
+ * Mirrors requireGenerationToken but uses its own token so the analysis
+ * routine (which may run on a different cadence/credential than piece
+ * generation) can be rotated independently.
+ */
+export function requireAnalysisToken(req: NextRequest): Response | null {
+  const expected = process.env.ANALYSIS_API_TOKEN;
+  const provided = bearerFrom(req);
+
+  if (!expected || !provided || provided !== expected) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  return null;
+}
+
+/**
+ * Bearer-token guard for analysis read endpoints (GET /api/analysis/latest)
+ * that both the analysis routine and the piece-generation routine need to
+ * call — accepts either ANALYSIS_API_TOKEN or GENERATION_API_TOKEN.
+ */
+export function requireAnalysisOrGenerationToken(req: NextRequest): Response | null {
+  const provided = bearerFrom(req);
+  const analysisExpected = process.env.ANALYSIS_API_TOKEN;
+  const generationExpected = process.env.GENERATION_API_TOKEN;
+
+  const matchesAnalysis = !!analysisExpected && provided === analysisExpected;
+  const matchesGeneration = !!generationExpected && provided === generationExpected;
+
+  if (!provided || (!matchesAnalysis && !matchesGeneration)) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -27,8 +71,7 @@ export function requireGenerationToken(req: NextRequest): Response | null {
  */
 export function requireCronSecret(req: NextRequest): Response | null {
   const expected = process.env.CRON_SECRET;
-  const header = req.headers.get("authorization");
-  const provided = header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : null;
+  const provided = bearerFrom(req);
 
   if (!expected || !provided || provided !== expected) {
     return Response.json({ error: "unauthorized" }, { status: 401 });

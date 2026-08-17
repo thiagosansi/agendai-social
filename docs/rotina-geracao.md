@@ -15,6 +15,12 @@ Você é o agente de geração de conteúdo do Agendaí Social Studio. Execute u
 rodada completa de geração de conteúdo de Instagram para a semana ISO atual.
 Siga estes passos, nesta ordem, sem pular nenhum:
 
+0. INVOCAR A SKILL DE ESTRATEGISTA: use a Skill tool para carregar
+   `agendai-social-strategist` (arquivo
+   `.claude/skills/agendai-social-strategist/SKILL.md` no repositório) e
+   siga suas regras duras e fórmulas ao escrever legendas e imagePrompts.
+   Se a Skill tool não estiver disponível, leia o arquivo diretamente.
+
 1. LER OS DOCUMENTOS-FONTE (no repositório agendai-social):
    - docs/01-produto-referencia.md — fonte factual única do produto. Nenhum
      benefício, número ou feature pode aparecer em copy se não estiver aqui.
@@ -38,6 +44,29 @@ Siga estes passos, nesta ordem, sem pular nenhum:
    ABORTE A RODADA IMEDIATAMENTE. Não gere nenhuma peça. Reporte o erro no
    resumo final. Nunca gere conteúdo sem conseguir consultar o relatório —
    é o sinal de que a API está no ar e as credenciais estão corretas.
+
+2b. BUSCAR A ÚLTIMA ANÁLISE DE DESEMPENHO:
+    GET {APP_URL}/api/analysis/latest
+    Header: Authorization: Bearer {GENERATION_API_TOKEN}
+
+    Em caso de 200, use `insights.hookPatterns`, `insights.captionPatterns`,
+    `insights.imagePromptGuidelines` e `insights.formatTactics`, além de
+    `recommendations`, para enviesar (i) a escolha entre os combos
+    pilar/segmento/formato ELEGÍVEIS desta rodada, (ii) a estrutura do
+    hook/legenda e (iii) o `imagePrompt`. Em caso de 404 (ainda não existe
+    análise), siga apenas o relatório + a rotação, sem análise. Em caso de
+    erro de rede ou status diferente de 200/404, isso NÃO é fatal (ao
+    contrário do passo 2): continue a rodada sem a análise e mencione a
+    falha no resumo final.
+
+    REGRA DE PRECEDÊNCIA (obrigatória): playbook (rotação, anti-repetição e
+    regras de copy) > relatório (`recommendations`/`rankingPilarFormato` de
+    /api/report/latest) > análise (/api/analysis/latest). A análise só
+    desempata entre opções já elegíveis e só influencia como escrever —
+    nunca autoriza violar rotação, anti-repetição, claims proibidas ou o
+    limite de peças por rodada. Toda rodada deve incluir pelo menos 1
+    elemento de teste (hook ou ângulo) fora do padrão vencedor indicado
+    pela análise (anti-drift).
 
 3. BUSCAR O HISTÓRICO RECENTE PARA A REGRA ANTI-REPETIÇÃO:
    GET {APP_URL}/api/pieces?since=6w
@@ -64,6 +93,11 @@ Siga estes passos, nesta ordem, sem pular nenhum:
    específica disser explicitamente para subir até 4.
 
 5. ESCREVER AS 2 PEÇAS:
+   Aplique as fórmulas de hook e a estrutura de legenda da skill
+   `agendai-social-strategist` carregada no passo 0, e não reutilize nenhum
+   hook já usado nas legendas das peças das últimas 6 semanas (consulte
+   `GET /api/pieces?since=6w` do passo 3 para essa checagem).
+
    Para cada peça, produza:
    - `caption`: legenda em pt-BR seguindo TODAS as regras de copy do
      playbook §3 (mecânica real nunca resultado garantido; CTA padrão
@@ -165,7 +199,7 @@ REGRAS QUE NUNCA MUDAM, independente do que constar acima:
 | Variável | Necessária para | Como passar para a rotina |
 |---|---|---|
 | `APP_URL` | Montar as URLs completas de `GET /api/report/latest`, `GET /api/pieces` e `POST /api/pieces` no prompt acima (ex.: `https://agendai-social.vercel.app` em produção, ou `http://localhost:3040` durante testes locais). | Não é secreto — pode ir literal no prompt da rotina, ou como variável de ambiente da rotina cloud se o Claude Code suportar interpolação de env em scheduled routines. |
-| `GENERATION_API_TOKEN` | Autenticar `GET /api/report/latest` e `POST /api/pieces` (bearer token, ver `lib/auth.ts`). Mesmo valor configurado na env do projeto Social Studio (Vercel/produção) ou no `.env` local (`dev-token-change-me` em dev). | **Secreto.** Configurar como variável de ambiente/secret da rotina agendada no Claude Code (`/schedule` pede para declarar env vars/secrets ao criar a rotina) — nunca colar o valor literal dentro do texto do prompt. |
+| `GENERATION_API_TOKEN` | Autenticar `GET /api/report/latest`, `GET /api/analysis/latest` (passo 2b do prompt) e `POST /api/pieces` (bearer token, ver `lib/auth.ts`). Mesmo valor configurado na env do projeto Social Studio (Vercel/produção) ou no `.env` local (`dev-token-change-me` em dev). | **Secreto.** Configurar como variável de ambiente/secret da rotina agendada no Claude Code (`/schedule` pede para declarar env vars/secrets ao criar a rotina) — nunca colar o valor literal dentro do texto do prompt. |
 
 Não há outras variáveis obrigatórias para a rotina de geração — `CRON_SECRET`, `META_IG_*` e `BLOB_READ_WRITE_TOKEN` pertencem ao cron de publicação e à aprovação, fora do escopo desta rotina.
 
@@ -180,15 +214,17 @@ Não há outras variáveis obrigatórias para a rotina de geração — `CRON_SE
 3. Cole o prompt completo da seção 1 deste documento como instrução da rotina.
 4. Substitua `{APP_URL}` no prompt colado pela URL real do deploy do Social Studio (ou deixe como variável se a interface de `/schedule` suportar).
 5. Configure `GENERATION_API_TOKEN` como variável de ambiente/secret da rotina (nunca como texto literal no prompt) — passo 3 do `/schedule`.
-6. Confirme que a rotina terá acesso de leitura ao repositório `agendai-social` (para os dois documentos-fonte e, opcionalmente, `scripts/claim-check.mjs`).
-7. Salve a rotina. Rode uma execução manual de teste antes de deixá-la 100% automática, e confira o resumo final (peças criadas, ids, racional) contra o checklist da seção 4 abaixo.
+6. Confirme que a rotina terá acesso de leitura ao repositório `agendai-social` (para os dois documentos-fonte, a skill `agendai-social-strategist` e, opcionalmente, `scripts/claim-check.mjs`).
+7. Confirme que os `allowed_tools` da rotina incluem `Skill` (além de `Bash`, `Read`, `Glob`, `Grep`, `WebFetch`) — é o que permite o passo 0 do prompt carregar `agendai-social-strategist` via Skill tool. Nunca inclua `Write`/`Edit`.
+8. Salve a rotina. Rode uma execução manual de teste antes de deixá-la 100% automática, e confira o resumo final (peças criadas, ids, racional) contra o checklist da seção 4 abaixo.
 
 **Variante alternativa: sem acesso ao repositório** (a rotina roda em um ambiente que só tem acesso HTTP, sem checkout do código):
 
 1. Siga os mesmos passos 1–2, 5 acima.
 2. No prompt, substitua o passo 1 ("LER OS DOCUMENTOS-FONTE") por instruções para buscar os dois documentos via `WebFetch`/`GET` nas URLs raw do repositório (ex.: `https://raw.githubusercontent.com/<org>/agendai-social/main/docs/01-produto-referencia.md` e o equivalente para `docs/02-playbook-conteudo.md`) — ajuste a URL para o branch/host reais do repositório.
-3. No passo 6 (auto-checagem de claims), a rotina não terá `node scripts/claim-check.mjs` disponível — ela deve usar exclusivamente a checagem manual descrita no próprio prompt (lista resumida de padrões proibidos), e confiar na validação de servidor (422) como rede de segurança final.
-4. Esta variante é mais frágil (lista de claims proibidas pode ficar desatualizada no prompt colado) — prefira a variante primária sempre que possível.
+3. Como esta variante não tem acesso ao repositório, a Skill tool não pode carregar `agendai-social-strategist`; substitua o passo 0 por uma busca via `WebFetch` na URL raw de `.claude/skills/agendai-social-strategist/SKILL.md` (mesmo host/branch usado no passo 2 acima) e siga o conteúdo lido como se fosse a skill.
+4. No passo 6 (auto-checagem de claims), a rotina não terá `node scripts/claim-check.mjs` disponível — ela deve usar exclusivamente a checagem manual descrita no próprio prompt (lista resumida de padrões proibidos), e confiar na validação de servidor (422) como rede de segurança final.
+5. Esta variante é mais frágil (lista de claims proibidas pode ficar desatualizada no prompt colado) — prefira a variante primária sempre que possível.
 
 ---
 
@@ -198,3 +234,4 @@ Não há outras variáveis obrigatórias para a rotina de geração — `CRON_SE
 - **Nunca edita código.** A rotina não tem (e não deve ter) permissão de escrita no repositório — nem no produto (`agendatmstudio`), nem no próprio `agendai-social` (nem os docs, nem a UI, nem a API). Ela só lê docs e chama a API HTTP.
 - **Aborta se a API estiver inacessível.** Se `GET /api/report/latest` falhar (rede, 5xx, 401 por token errado), a rotina para imediatamente e não gera nenhuma peça — nunca preenche dados de relatório "de memória" ou inventados.
 - **Máximo 2 peças por rodada**, salvo override explícito no prompt daquela execução específica (até 4, por `PECAS_POR_RODADA`, playbook §2). A rotina nunca decide sozinha subir esse número.
+- **A análise nunca sobrepõe o playbook.** `/api/analysis/latest` só influencia estilo e desempate entre opções já elegíveis pela rotação/anti-repetição — nunca autoriza violar o playbook.

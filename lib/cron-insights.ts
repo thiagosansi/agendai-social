@@ -9,7 +9,11 @@ import {
 } from "@/lib/instagram";
 
 const INSIGHTS_WINDOW_MS = 8 * 7 * 24 * 60 * 60 * 1000; // 8 weeks — same lookback as GET /api/report/latest
-const SETTLING_WINDOW_MS = 48 * 60 * 60 * 1000; // metrics are still settling right after publish
+
+// metrics are still settling right after publish — exported so
+// GET /api/analysis/source can flag freshly-published pieces the same way
+// this cron does, without duplicating the constant.
+export const SETTLING_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 // Maps a Piece.format to the Graph API media_product_type insights need —
 // mirrors resolveContainerKind in lib/cron-publish.ts, but for

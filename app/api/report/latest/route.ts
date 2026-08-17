@@ -3,6 +3,7 @@ import { PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireGenerationToken } from "@/lib/auth";
 import { DEFAULT_GENERATION_INTERVAL_WEEKS, getSetting, getSettingString } from "@/lib/settings";
+import { buildRanking, type PillarFormatRanking, type Totals } from "@/lib/report";
 
 export const runtime = "nodejs";
 
@@ -26,46 +27,9 @@ function computeGenerationDue(lastPieceCreatedAt: Date | null, intervalWeeks: nu
   return Date.now() - lastPieceCreatedAt.getTime() >= dueAfterMs;
 }
 
-interface PieceMetricsShape {
-  reach?: number;
-  saved?: number;
-  likes?: number;
-  comments?: number;
-  shares?: number;
-}
-
-interface PillarFormatRanking {
-  pillar: string;
-  format: string;
-  pieces: number;
-  avgReach: number;
-  avgSaved: number;
-  avgEngagement: number;
-}
-
-interface Totals {
-  pieces: number;
-  avgReach: number;
-  avgSaved: number;
-  avgEngagement: number;
-}
-
 interface FollowerSnapshot {
   capturedAt: string;
   followersCount: number;
-}
-
-// engagement = likes + comments + saved + shares, per the task brief and
-// docs/02-playbook-conteudo.md §6 ("Ranquear pilares e formatos por saves +
-// comentários" — extended here to include likes/shares now that the
-// automated insights cron captures them too).
-function engagementOf(metrics: PieceMetricsShape): number {
-  return (metrics.likes ?? 0) + (metrics.comments ?? 0) + (metrics.saved ?? 0) + (metrics.shares ?? 0);
-}
-
-function average(values: number[]): number {
-  if (values.length === 0) return 0;
-  return Math.round((values.reduce((sum, v) => sum + v, 0) / values.length) * 10) / 10;
 }
 
 // From env META_TOKEN_EXPIRES_AT (see README's env table). Independent of
@@ -189,49 +153,7 @@ export async function GET(req: NextRequest) {
     orderBy: { publishAt: "asc" },
   });
 
-  const groups = new Map<
-    string,
-    { pillar: string; format: string; reach: number[]; saved: number[]; engagement: number[] }
-  >();
-  const allReach: number[] = [];
-  const allSaved: number[] = [];
-  const allEngagement: number[] = [];
-
-  for (const piece of pieces) {
-    const metrics = (piece.metrics as PieceMetricsShape | null) ?? {};
-    const reach = metrics.reach ?? 0;
-    const saved = metrics.saved ?? 0;
-    const engagement = engagementOf(metrics);
-
-    const key = `${piece.pillar}::${piece.format}`;
-    const group = groups.get(key) ?? { pillar: piece.pillar, format: piece.format, reach: [], saved: [], engagement: [] };
-    group.reach.push(reach);
-    group.saved.push(saved);
-    group.engagement.push(engagement);
-    groups.set(key, group);
-
-    allReach.push(reach);
-    allSaved.push(saved);
-    allEngagement.push(engagement);
-  }
-
-  const ranking: PillarFormatRanking[] = Array.from(groups.values())
-    .map((g) => ({
-      pillar: g.pillar,
-      format: g.format,
-      pieces: g.reach.length,
-      avgReach: average(g.reach),
-      avgSaved: average(g.saved),
-      avgEngagement: average(g.engagement),
-    }))
-    .sort((a, b) => b.avgEngagement - a.avgEngagement);
-
-  const totals: Totals = {
-    pieces: pieces.length,
-    avgReach: average(allReach),
-    avgSaved: average(allSaved),
-    avgEngagement: average(allEngagement),
-  };
+  const { ranking, totals } = buildRanking(pieces);
 
   const snapshots = await prisma.accountSnapshot.findMany({
     orderBy: { capturedAt: "desc" },

@@ -88,3 +88,76 @@ export type PushSubscriptionInput = z.infer<typeof pushSubscriptionSchema>;
 export const pushUnsubscribeSchema = z.object({
   endpoint: z.string().url("endpoint must be a valid URL"),
 });
+
+// AnalysisReport.recommendations[].type values (prisma/schema.prisma).
+export const ANALYSIS_RECOMMENDATION_TYPES = ["promote", "avoid", "test", "caption", "image"] as const;
+
+// POST /api/analysis — creates an AnalysisReport. `insights` and
+// `recommendations` are validated against fixed shapes (rather than left as
+// free-form Json) so downstream consumers (the generation routine reading
+// GET /api/analysis/latest) can rely on the structure without re-checking
+// it themselves.
+const rawDeltaSchema = z.object({
+  current: z.number(),
+  previous: z.number(),
+  deltaPct: z.number().nullable(),
+});
+
+const analysisInsightsSchema = z.object({
+  topCombos: z.array(
+    z.object({
+      pillar: z.string(),
+      format: z.string(),
+      avgEngagement: z.number(),
+      pieces: z.number(),
+    }),
+  ),
+  hookPatterns: z.array(
+    z.object({
+      pattern: z.string(),
+      evidence: z.string(),
+    }),
+  ),
+  captionPatterns: z.array(
+    z.object({
+      pattern: z.string(),
+      evidence: z.string(),
+    }),
+  ),
+  formatTactics: z.array(
+    z.object({
+      format: z.string(),
+      tactic: z.string(),
+      evidence: z.string(),
+    }),
+  ),
+  imagePromptGuidelines: z.array(z.string()),
+  rawDeltas: z.object({
+    reach: rawDeltaSchema,
+    engagement: rawDeltaSchema,
+    followers: rawDeltaSchema,
+  }),
+});
+
+const analysisRecommendationSchema = z.object({
+  type: z.enum(ANALYSIS_RECOMMENDATION_TYPES),
+  text: z.string().trim().min(1, "text is required"),
+  evidence: z.string(),
+  priority: z.number().int().min(0).max(2),
+});
+
+export const createAnalysisReportSchema = z
+  .object({
+    periodStart: z.string().datetime(),
+    periodEnd: z.string().datetime(),
+    summaryMarkdown: z.string().trim().min(1, "summaryMarkdown is required").max(20000),
+    insights: analysisInsightsSchema,
+    recommendations: z.array(analysisRecommendationSchema).max(5),
+    schemaVersion: z.literal(1).optional().default(1),
+  })
+  .refine((data) => new Date(data.periodEnd) >= new Date(data.periodStart), {
+    message: "periodEnd must be after periodStart",
+    path: ["periodEnd"],
+  });
+
+export type CreateAnalysisReportInput = z.infer<typeof createAnalysisReportSchema>;

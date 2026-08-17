@@ -15,7 +15,9 @@ draft ──(owner approves + uploads image)──▶ approved ──(daily cron
 - **approved** — a human (the founder) reviewed the copy and uploaded the image(s) generated from the piece's `imagePrompt`. Nothing is published without this step.
 - **published** / **failed** — set by the daily publish cron depending on whether the Instagram Graph API call succeeded.
 
-See `docs/02-playbook-conteudo.md` for the full editorial contract (content pillars, anti-repetition rotation, forbidden claims, tone rules) that every generated piece must follow, and `docs/rotina-geracao.md` for the operational guide to configure the weekly scheduled generation routine (prompt to paste, env vars, `/schedule` steps, guard-rails).
+See `docs/02-playbook-conteudo.md` for the full editorial contract (content pillars, anti-repetition rotation, forbidden claims, tone rules) that every generated piece must follow, and `docs/rotina-geracao.md` for the operational guide to configure the weekly scheduled generation routine (prompt to paste, env vars, `/schedule` steps, guard-rails) — that routine now also reads `GET /api/analysis/latest` to bias hook/caption/imagePrompt style. See `docs/rotina-analise.md` for the monthly analysis routine that produces those reports.
+
+Scheduled cloud routines get their content expertise from repo-checked-in skills under `.claude/skills/` (`agendai-social-strategist` for the generation routine, `analise-desempenho` for the analysis routine) — see the routine docs above for how each routine invokes its skill.
 
 ### Images
 
@@ -51,6 +53,7 @@ pnpm dev
 | `DATABASE_URL` | Local/production Postgres connection string. Local dev uses port **5433** (5432 is used by the main `agendatmstudio` product's local DB). |
 | `APP_PASSWORD` | Shared password gate for the approval web UI (single-owner tool, no multi-user auth yet). |
 | `GENERATION_API_TOKEN` | Bearer token the AI generation routine sends when calling `POST /api/pieces`. |
+| `ANALYSIS_API_TOKEN` | Bearer token the analysis routine sends when calling `POST /api/analysis`. `GET /api/analysis/latest` also accepts `GENERATION_API_TOKEN`. |
 | `CRON_SECRET` | Shared secret the daily publish cron must present to trigger a run. |
 | `META_IG_USER_ID` | Instagram Business account ID used to publish approved pieces. |
 | `META_IG_TOKEN` | Instagram Graph API access token. |
@@ -171,6 +174,14 @@ pnpm publish:dry      # another — GETs /api/cron/publish?dry=1 with CRON_SECRE
 PORT=3030 pnpm dev     # one terminal
 pnpm report:fixture     # another — seeds, calls the endpoint, cleans up
 ```
+
+### Analysis reports
+
+`AnalysisReport` stores a periodic (or on-demand) AI-generated review of recent performance — `summaryMarkdown` prose plus structured `insights` (top pillar/format combos, hook/caption patterns, format tactics, image-prompt guidelines, raw deltas) and up to 5 `recommendations` (see `lib/validation.ts`'s `createAnalysisReportSchema` for the exact shape). See `docs/rotina-analise.md` for the operational guide to configure the monthly scheduled analysis routine that produces these reports.
+
+- **`POST /api/analysis`** — creates a report from a fully-formed payload. Requires `ANALYSIS_API_TOKEN`. `400` on invalid JSON or a payload that fails validation.
+- **`GET /api/analysis/latest`** — returns the most recently created report, or `404 {"error":"no analysis report yet"}` when none exists. Accepts either `ANALYSIS_API_TOKEN` or `GENERATION_API_TOKEN`.
+- **`GET /api/analysis/source?since=8w`** — app-mediated data source for the analysis routine (which never holds `META_IG_TOKEN`): published pieces (with `settling` flag, permalink, and raw `metrics` as collected by the insights cron) plus `followersTrend` and the same `rankingPilarFormato`/`totals` as `report/latest`, windowed by `since` (default `8w`, same parsing as `GET /api/pieces`). Accepts either `ANALYSIS_API_TOKEN` or `GENERATION_API_TOKEN`; `400` on an invalid `since`.
 
 ## Frequência de geração
 

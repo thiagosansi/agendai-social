@@ -120,9 +120,11 @@ O dono marca este checklist antes de aprovar qualquer peça na interface web (a 
 
 ## 6. Revisão mensal
 
-1x por mês (pode ser executada pela própria rotina automatizada, agendada para a 1ª semana do mês):
+Esta revisão agora é executada pela rotina de análise mensal documentada em `docs/rotina-analise.md`, que persiste o resultado via `POST /api/analysis` (visível na página `/analise` e consumido pela rotina semanal de geração via `GET /api/analysis/latest`). Os 4 passos abaixo continuam valendo como o que essa rotina precisa cobrir:
 
-1. Ler as métricas registradas no banco de dados (peças publicadas do mês anterior e suas métricas manuais).
+1x por mês (executada pela rotina de análise agendada, tipicamente na 1ª semana do mês):
+
+1. Ler as métricas de peças publicadas do mês anterior — via `GET /api/analysis/source` (cron de insights do app já as coleta e as expõe agregadas), não direto do banco.
 2. Ranquear pilares e formatos por `saves + comentários`.
 3. Sugerir ajuste na rotação (seção 2) com base no ranking — por exemplo, promover um pilar com desempenho consistentemente melhor, sem violar a regra anti-repetição.
 4. Verificar se `docs/01-produto-referencia.md` diverge do código atual do produto (features novas, desligadas ou com gate de plano alterado) e listar explicitamente o que precisa ser atualizado nesse documento — esta rotina **não edita** o `01-produto-referencia.md` diretamente, apenas sinaliza.
@@ -134,6 +136,8 @@ O dono marca este checklist antes de aprovar qualquer peça na interface web (a 
 ### 7a. Rotina cloud do Claude Code (executor principal, recomendado)
 
 Roda na nuvem sobre o repositório `agendai-social` conectado — **não depende do Mac estar ligado**. Consegue ler os docs, chamar a API de criação de peças e rodar `pnpm claim-check` localmente se quiser validar antes de enviar.
+
+- Existe uma segunda rotina cloud, independente desta, para a revisão mensal de desempenho — ver `docs/rotina-analise.md` para o passo a passo de configuração dessa rotina de análise.
 
 **Como criar**: no Claude Code, use `/schedule` para criar uma rotina cloud com cron.
 
