@@ -1,6 +1,6 @@
 import { Inbox, CalendarClock, Send, AlertTriangle } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { orderedImagesInclude } from "@/lib/piece-images";
+import { isVideoMedia, orderedImagesInclude } from "@/lib/piece-images";
 import { DEFAULT_GENERATION_INTERVAL_WEEKS, getSetting, getSettingString } from "@/lib/settings";
 import { computeGenerationDue } from "@/lib/generation-schedule";
 import { tokenStatus } from "@/lib/meta-token";
@@ -30,6 +30,16 @@ const FREQUENCY_LABELS: Record<string, string> = {
 };
 
 const ALERT_LEVEL_RANK: Record<DashboardAlert["level"], number> = { red: 0, amber: 1, info: 2 };
+
+// Cover media for a PieceMini row: the first PieceImage's url when it's an
+// image, or its coverUrl (may be null) when it's a video — a video's own
+// `url` is the MP4/MOV file and can't be rendered in an <img>.
+function pieceCoverMedia(images: { url: string; coverUrl: string | null; kind: string }[]) {
+  const first = images[0];
+  if (!first) return { coverImageUrl: null, isVideo: false };
+  if (isVideoMedia(first)) return { coverImageUrl: first.coverUrl, isVideo: true };
+  return { coverImageUrl: first.url, isVideo: false };
+}
 
 // Strips leading markdown heading markers ("#", "##", ...) from every line
 // and collapses the result to a short plain-text excerpt for the dashboard
@@ -214,7 +224,7 @@ export default async function Home() {
                     format: piece.format,
                     status: piece.status,
                     publishAt: piece.publishAt,
-                    coverImageUrl: piece.images[0]?.url ?? null,
+                    ...pieceCoverMedia(piece.images),
                   }}
                 />
               ))}
@@ -240,7 +250,7 @@ export default async function Home() {
                     format: piece.format,
                     status: piece.status,
                     publishAt: piece.publishAt,
-                    coverImageUrl: piece.images[0]?.url ?? null,
+                    ...pieceCoverMedia(piece.images),
                     metrics: piece.metrics,
                   }}
                 />

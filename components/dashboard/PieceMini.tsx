@@ -1,3 +1,4 @@
+import { Video } from "lucide-react";
 import { FormatBadge, StatusBadge } from "@/components/Badges";
 import { formatDateTimeSP, publishCountdown } from "@/lib/format";
 
@@ -15,7 +16,13 @@ export interface PieceMiniData {
   format: string;
   status: string;
   publishAt: Date;
+  // Real image URL to render — for a video cover media (isVideo=true) this
+  // is the optional PieceImage.coverUrl thumbnail, never the video file
+  // itself, since that can't be shown in an <img>.
   coverImageUrl: string | null;
+  // True when the piece's cover media is a video (kind="video") rather
+  // than an image — drives the placeholder tile when no coverImageUrl.
+  isVideo?: boolean;
   metrics?: unknown;
 }
 
@@ -41,6 +48,10 @@ export function PieceMini({ piece, variant }: { piece: PieceMiniData; variant: "
         <div className="h-12 w-12 shrink-0 overflow-hidden rounded-md bg-zinc-100">
           {/* eslint-disable-next-line @next/next/no-img-element -- image can come from same-origin /uploads or an arbitrary Vercel Blob host in prod */}
           <img src={piece.coverImageUrl} alt="" className="h-full w-full object-cover" />
+        </div>
+      ) : piece.isVideo ? (
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-zinc-100">
+          <Video className="h-5 w-5 text-zinc-400" aria-hidden="true" />
         </div>
       ) : (
         <div className="h-12 w-12 shrink-0 rounded-md bg-zinc-100" />

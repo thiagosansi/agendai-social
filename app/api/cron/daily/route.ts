@@ -10,6 +10,12 @@ import {
 
 export const runtime = "nodejs";
 
+// Video containers (reels/story_video, lib/cron-publish.ts) can poll for
+// several minutes before finishing — Fluid Compute allows functions to run
+// well past the old 10s/60s serverless ceiling, so opt into the budget
+// runPublish's own RUN_BUDGET_MS (240s) is built around.
+export const maxDuration = 300;
+
 interface DailyResponse {
   publish: PublishPayload;
   insights: InsightsPayload | { skipped: string };

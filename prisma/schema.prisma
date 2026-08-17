@@ -25,12 +25,14 @@ model Piece {
   imagePrompt String
 
   // Uploaded by the founder during approval (POST/DELETE
-  // /api/pieces/[id]/image); never writable directly through POST/PATCH.
-  // Ordered by sortOrder — index 0 is used as the "cover" image everywhere a
-  // single thumbnail is needed (fila list, /publicados). `estatico`/`stories`
-  // hold exactly one image; `carrossel` holds 2-10 (see lib/validation.ts).
-  // Images are mutable only while status=draft — once approved they're
-  // frozen so the queued publish always ships what was reviewed.
+  // /api/pieces/[id]/image, or POST .../video for reels/stories video);
+  // never writable directly through POST/PATCH. Ordered by sortOrder —
+  // index 0 is used as the "cover" media everywhere a single thumbnail is
+  // needed (fila list, /publicados). `estatico`/`carrossel` hold images
+  // only (2-10 for carrossel, see lib/validation.ts); `reels` holds exactly
+  // 1 video; `stories` holds exactly 1 image OR 1 video (kind="video").
+  // Media is mutable only while status=draft — once approved it's frozen so
+  // the queued publish always ships what was reviewed.
   images PieceImage[]
 
   publishAt DateTime
@@ -44,6 +46,15 @@ model Piece {
 
   claimCheckPassed Boolean @default(false)
   lastError        String?
+
+  // Set while a reels/story video container is still processing on Meta's
+  // side when the publish cron's per-run time budget (lib/cron-publish.ts's
+  // RUN_BUDGET_MS) runs out — status stays `approved` (not `failed`) and the
+  // next cron run resumes by polling this container instead of creating a
+  // new one. Cleared (both fields set back to null) as soon as the container
+  // reaches FINISHED (then published) or ERROR/EXPIRED (then failed).
+  pendingContainerId        String?
+  pendingContainerCreatedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -66,17 +77,30 @@ enum PieceStatus {
   failed
 }
 
-// One uploaded image belonging to a Piece, ordered by sortOrder (0-based,
-// contiguous — POST/DELETE /api/pieces/[id]/image resequence on every
-// mutation). url is either a Vercel Blob URL or a local /uploads/... path
-// (see app/api/pieces/[id]/image/route.ts).
+// One uploaded media item belonging to a Piece, ordered by sortOrder
+// (0-based, contiguous — POST/DELETE /api/pieces/[id]/image resequence on
+// every mutation). url is either a Vercel Blob URL or a local /uploads/...
+// path (see app/api/pieces/[id]/image/route.ts and .../video/route.ts).
+//
+// `kind` distinguishes "image" (default, unchanged v1 behavior) from
+// "video" (reels/stories only — see lib/validation.ts's VIDEO_FORMATS).
+// `contentType`/`durationSec` are set for video rows (MIME type and
+// duration in seconds, the latter supplied by the client since deriving it
+// server-side would require a media-probing dependency this app doesn't
+// have). `coverUrl` is an optional still-image thumbnail for a video row,
+// uploaded separately via POST .../video/cover — when absent, Meta derives
+// a cover automatically from the video itself.
 model PieceImage {
-  id        String   @id @default(cuid())
-  pieceId   String
-  piece     Piece    @relation(fields: [pieceId], references: [id], onDelete: Cascade)
-  url       String
-  sortOrder Int
-  createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  pieceId     String
+  piece       Piece    @relation(fields: [pieceId], references: [id], onDelete: Cascade)
+  url         String
+  sortOrder   Int
+  kind        String   @default("image") // "image" | "video"
+  contentType String?
+  durationSec Int?
+  coverUrl    String?
+  createdAt   DateTime @default(now())
 
   @@index([pieceId, sortOrder])
 }

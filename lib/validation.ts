@@ -35,6 +35,36 @@ export type PatchPieceInput = z.infer<typeof patchPieceSchema>;
 export const ALLOWED_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
+// Video support (reels/stories only — app/api/pieces/[id]/video/*.ts).
+// MP4 and MOV are the two containers Meta's Content Publishing API accepts
+// for video (H.264/AAC encoded); 200MB mirrors Meta's own Reels/Stories
+// video upload cap.
+const VIDEO_CONTENT_TYPES = ["video/mp4", "video/quicktime"] as const;
+export const ALLOWED_VIDEO_CONTENT_TYPES = new Set<string>(VIDEO_CONTENT_TYPES);
+export const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+
+// Meta's published limits: Reels up to 15min, Stories video up to 60s.
+export const MAX_REELS_DURATION_SEC = 900;
+export const MAX_STORY_VIDEO_DURATION_SEC = 60;
+
+// PieceFormat values that accept video media (lib/piece-images.ts's
+// isVideoMedia). estatico/carrossel stay image-only.
+export const VIDEO_FORMATS = ["reels", "stories"] as const;
+
+// POST /api/pieces/[id]/video (JSON body) — registers a video already
+// uploaded directly to Vercel Blob via the client upload token flow
+// (app/api/pieces/[id]/video/upload-token/route.ts). `size` is validated
+// here but not persisted (PieceImage has no size column); it exists purely
+// so an oversized direct-to-Blob upload can still be rejected server-side.
+export const registerVideoSchema = z.object({
+  url: z.string().url("url must be a valid URL"),
+  contentType: z.enum(VIDEO_CONTENT_TYPES),
+  size: z.number().int().positive().max(MAX_VIDEO_BYTES, "file too large"),
+  durationSec: z.number().int().positive().optional(),
+});
+
+export type RegisterVideoInput = z.infer<typeof registerVideoSchema>;
+
 // Per-format image count limits (app/api/pieces/[id]/image/route.ts).
 // carrossel needs at least 2 images to publish as a real Instagram carousel
 // (see docs on lib/instagram.ts's createCarouselContainer); other formats

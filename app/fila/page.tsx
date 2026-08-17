@@ -24,7 +24,14 @@ export default async function FilaPage() {
     format: piece.format,
     caption: piece.caption,
     imagePrompt: piece.imagePrompt,
-    images: piece.images.map((image) => ({ id: image.id, url: image.url })),
+    images: piece.images.map((image) => ({
+      id: image.id,
+      url: image.url,
+      kind: image.kind,
+      contentType: image.contentType,
+      durationSec: image.durationSec,
+      coverUrl: image.coverUrl,
+    })),
     publishAt: piece.publishAt.toISOString(),
     status: piece.status,
   }));

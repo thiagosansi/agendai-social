@@ -131,6 +131,14 @@ Siga estes passos, nesta ordem, sem pular nenhum:
      `Imagens/` no repositório principal agendatmstudio, quando acessível),
      cite o print exato; caso contrário, descreva a cena com detalhe
      suficiente.
+     Para `reels`, o campo `imagePrompt` vira um **briefing/roteiro de
+     vídeo**, não uma descrição de imagem estática: cena a cena, texto na
+     tela quando houver overlay, duração alvo (≤ 60–90s, nunca acima do
+     `MAX_REELS_DURATION_SEC` de 900s), personagem LARA/CAMILA/JÚLIA quando
+     aplicável (descrições verbatim do 01-produto-referencia §8), formato
+     9:16. O dono grava/edita o MP4 (ou MOV) e faz o upload direto na UI da
+     fila (`/fila`, componente `PieceCard`) na hora de aprovar — o agente
+     nunca gera nem sobe o vídeo em si.
    - `publishAt`: próximo slot apropriado, terça ou quinta-feira às 11:00
      America/Sao_Paulo (UTC-3, Brasil não observa horário de verão),
      expresso em ISO 8601 UTC (ex.: 11:00 BRT = 14:00:00Z). Distribua as 2

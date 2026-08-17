@@ -3,8 +3,12 @@ import { Prisma, PieceFormat, PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requirePieceEditor } from "@/lib/session";
 import { checkText, loadRules } from "@/lib/claim-check";
-import { orderedImagesInclude } from "@/lib/piece-images";
-import { MIN_CARROSSEL_IMAGES_TO_APPROVE, patchPieceSchema } from "@/lib/validation";
+import { isVideoMedia, orderedImagesInclude } from "@/lib/piece-images";
+import {
+  MAX_STORY_VIDEO_DURATION_SEC,
+  MIN_CARROSSEL_IMAGES_TO_APPROVE,
+  patchPieceSchema,
+} from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -66,17 +70,50 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         { status: 422 },
       );
     }
-    if (existing.images.length === 0) {
-      return Response.json(
-        { error: "pelo menos uma imagem é necessária antes de aprovar — envie via POST /api/pieces/[id]/image" },
-        { status: 422 },
-      );
-    }
-    if (existing.format === PieceFormat.carrossel && existing.images.length < MIN_CARROSSEL_IMAGES_TO_APPROVE) {
-      return Response.json(
-        { error: "Carrossel precisa de pelo menos 2 imagens" },
-        { status: 422 },
-      );
+    // Media rules per format (lib/piece-images.ts's isVideoMedia,
+    // lib/validation.ts's VIDEO_FORMATS): reels holds exactly 1 video;
+    // stories holds exactly 1 image OR 1 video (capped at
+    // MAX_STORY_VIDEO_DURATION_SEC); estatico/carrossel stay image-only.
+    const videoCount = existing.images.filter(isVideoMedia).length;
+
+    if (existing.format === PieceFormat.reels) {
+      if (existing.images.length !== 1 || videoCount !== 1) {
+        return Response.json({ error: "reels exige exatamente 1 vídeo" }, { status: 422 });
+      }
+    } else if (existing.format === PieceFormat.stories) {
+      if (existing.images.length !== 1) {
+        return Response.json(
+          { error: "stories exige exatamente 1 mídia (imagem ou vídeo)" },
+          { status: 422 },
+        );
+      }
+      const [media] = existing.images;
+      if (isVideoMedia(media) && (media.durationSec ?? 0) > MAX_STORY_VIDEO_DURATION_SEC) {
+        return Response.json(
+          { error: `vídeo de stories não pode ultrapassar ${MAX_STORY_VIDEO_DURATION_SEC}s` },
+          { status: 422 },
+        );
+      }
+    } else {
+      // estatico / carrossel — images only.
+      if (videoCount > 0) {
+        return Response.json(
+          { error: "vídeo só é permitido em reels/stories" },
+          { status: 422 },
+        );
+      }
+      if (existing.images.length === 0) {
+        return Response.json(
+          { error: "pelo menos uma imagem é necessária antes de aprovar — envie via POST /api/pieces/[id]/image" },
+          { status: 422 },
+        );
+      }
+      if (existing.format === PieceFormat.carrossel && existing.images.length < MIN_CARROSSEL_IMAGES_TO_APPROVE) {
+        return Response.json(
+          { error: "Carrossel precisa de pelo menos 2 imagens" },
+          { status: 422 },
+        );
+      }
     }
     if (!claimCheckPassed) {
       return Response.json({ error: "claim-check must pass before approving" }, { status: 422 });

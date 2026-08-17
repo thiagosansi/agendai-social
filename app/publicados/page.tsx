@@ -1,5 +1,6 @@
+import { Video } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { orderedImagesInclude } from "@/lib/piece-images";
+import { isVideoMedia, orderedImagesInclude } from "@/lib/piece-images";
 import { FormatBadge, StatusBadge } from "@/components/Badges";
 import { formatDateTimeSP } from "@/lib/format";
 
@@ -40,7 +41,12 @@ export default async function PublicadosPage() {
         <ul className="flex flex-col gap-4">
           {pieces.map((piece) => {
             const metrics = (piece.metrics as unknown as PieceMetrics | null) ?? {};
-            const coverImageUrl = piece.images[0]?.url ?? null;
+            const coverMedia = piece.images[0];
+            // A video's own `url` is the MP4/MOV file, not renderable in an
+            // <img> — show its optional coverUrl thumbnail instead, or a
+            // placeholder tile with a video icon when no cover was set.
+            const coverIsVideo = coverMedia ? isVideoMedia(coverMedia) : false;
+            const coverImageUrl = coverMedia ? (coverIsVideo ? coverMedia.coverUrl : coverMedia.url) : null;
 
             return (
               <li key={piece.id} id={`piece-${piece.id}`} className="rounded-lg border border-zinc-200 bg-white p-4">
@@ -53,11 +59,17 @@ export default async function PublicadosPage() {
                 </div>
 
                 <div className="mt-2 flex gap-3">
-                  {coverImageUrl && (
+                  {coverImageUrl ? (
                     <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md bg-zinc-100">
                       {/* eslint-disable-next-line @next/next/no-img-element -- image can come from same-origin /uploads or an arbitrary Vercel Blob host in prod */}
                       <img src={coverImageUrl} alt="" className="h-full w-full object-cover" />
                     </div>
+                  ) : (
+                    coverIsVideo && (
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-zinc-100">
+                        <Video className="h-5 w-5 text-zinc-400" aria-hidden="true" />
+                      </div>
+                    )
                   )}
                   <p className="line-clamp-3 text-sm text-zinc-700">{piece.caption}</p>
                 </div>

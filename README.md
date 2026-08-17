@@ -24,10 +24,23 @@ Scheduled cloud routines get their content expertise from repo-checked-in skills
 Each `Piece` owns an ordered list of `PieceImage` rows (`sortOrder`, 0-based) instead of a single URL — this is what makes real Instagram carousels possible (see "Publicação" below).
 
 - `POST /api/pieces/[id]/image` (multipart, field `file`) — adds one image. `carrossel` pieces append up to 10; every other format holds a single "cover" image, so a second upload **replaces** the first.
-- `DELETE /api/pieces/[id]/image/[imageId]` — removes one image and resequences the rest.
+- `DELETE /api/pieces/[id]/image/[imageId]` — removes one image or video and resequences the rest (also cleans up its local `/uploads/...` file and cover file, if any — Blob uploads are left in place, same as image uploads always have been).
 - `PATCH /api/pieces/[id]/image/reorder` (`{ imageOrder: string[] }`, the piece's current image ids in the desired order) — sets the publish order. Index 0 is the carousel's first slide.
 - Image mutations (add/remove/reorder) are only allowed while `status=draft`. Once a piece is `approved`, its images are frozen — the queued publish always ships exactly what was reviewed — and these routes return `409`.
-- Approving (`PATCH /api/pieces/[id]` with `status=approved`) requires ≥1 image, and ≥2 for `carrossel` (`422 "Carrossel precisa de pelo menos 2 imagens"` otherwise).
+- Approving (`PATCH /api/pieces/[id]` with `status=approved`) requires ≥1 image, and ≥2 for `carrossel` (`422 "Carrossel precisa de pelo menos 2 imagens"` otherwise). `reels` requires exactly 1 video (`422 "reels exige exatamente 1 vídeo"`); `stories` requires exactly 1 media item, image or video (`422 "stories exige exatamente 1 mídia (imagem ou vídeo)"`, plus `422` if a story video exceeds 60s); `estatico`/`carrossel` reject video entirely (`422 "vídeo só é permitido em reels/stories"`).
+
+### Vídeo (reels/stories)
+
+`reels` and `stories` accept a single video instead of an image (`PieceImage.kind="image"|"video"`, `lib/piece-images.ts`'s `isVideoMedia`). Limits (`lib/validation.ts`): MP4/MOV (H.264/AAC), 200MB max (`MAX_VIDEO_BYTES`), reels up to 15min per Meta's cap (`MAX_REELS_DURATION_SEC` — keep it ≤90s in practice, Reels engagement drops sharply past that), stories up to 60s (`MAX_STORY_VIDEO_DURATION_SEC`). 9:16 vertical is the expected aspect ratio for both, though not enforced server-side.
+
+- `POST /api/pieces/[id]/video/upload-token` — issues a `@vercel/blob/client` client-upload token so the video goes straight from the browser to Blob storage (bypassing this server's request-body limit). Returns `{ mode: "local" }` instead when `BLOB_READ_WRITE_TOKEN` is unset, so the client falls back to option 2 below. Only for `reels`/`stories` in `draft`, and only when the piece has no video yet (`409` otherwise).
+- `POST /api/pieces/[id]/video` — registers the video. Two shapes: (1) JSON `{ url, contentType, size, durationSec? }` for a video already uploaded to Blob via the token above (rejects any `url` that isn't a real Blob URL under this piece's `pieces/[id]-video...` prefix); (2) `multipart/form-data` (field `file`, optional `durationSec`) for local dev (writes to `public/uploads`, same as the image route) or a direct server-side upload. Same `reels`/`stories`/`draft`/no-existing-video guard rails as the token route.
+- `POST /api/pieces/[id]/video/cover` (multipart, field `file`) — optional still-image thumbnail for the video (`PieceImage.coverUrl`, becomes Meta's `cover_url` on the Reels container). `422` if the piece has no video yet; a second call replaces the previous cover.
+- All three routes are `draft`-only, same freeze-after-approval rule as the image routes.
+
+In the `/fila` UI (`components/fila/PieceCard.tsx`), the reels uploader accepts video only and the stories uploader accepts image or video; on selecting a video it reads the duration client-side (rejecting stories videos over 60s outright, warning but allowing reels videos over the recommended 90s), then uploads it — straight to Blob via `upload()` from `@vercel/blob/client` in production (with a live progress %), or through the local-dev multipart fallback when `BLOB_READ_WRITE_TOKEN` is unset — and shows an inline player with an optional cover-image upload (reels only).
+
+**Async processing** — a video container can take Meta well over a minute to finish processing (unlike images, which are near-instant). The publish cron polls with a per-run time budget (`RUN_BUDGET_MS`, 240s) instead of blocking indefinitely: if the container hasn't reached `FINISHED` by the time the budget runs out, the piece stays `approved` with `pendingContainerId`/`pendingContainerCreatedAt` set, and the **next cron run resumes by polling that same container** (no new container is created) instead of failing the piece. A container still `IN_PROGRESS` after 24h is treated as stuck and fails the piece (`"container expirou"`).
 
 ## Stack
 
@@ -58,7 +71,7 @@ pnpm dev
 | `META_IG_USER_ID` | Instagram Business account ID used to publish approved pieces. |
 | `META_IG_TOKEN` | Instagram Graph API access token. |
 | `META_TOKEN_EXPIRES_AT` | Expiry timestamp for `META_IG_TOKEN`, used to warn before it lapses. |
-| `BLOB_READ_WRITE_TOKEN` | Vercel Blob token — stores the approved piece image before publish. |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob token — stores the approved piece's image(s)/video before publish. **Required in production** for video: without it, video uploads fall back to local `public/uploads/...` files that Meta's servers can't fetch, so reels/stories video publish would always fail. |
 | `VAPID_PUBLIC_KEY` | Public half of the Web Push key pair. Served to the browser by `GET /api/push/subscribe`. |
 | `VAPID_PRIVATE_KEY` | Private half of the Web Push key pair — signs push requests, never leaves the server. |
 | `VAPID_SUBJECT` | Contact string required by the Web Push spec, e.g. `mailto:voce@exemplo.com`. |
@@ -164,13 +177,15 @@ pnpm claim-check --text "Seus clientes marcam horário sozinhos, pelo link."
 
 1. **Always runs publish** — picks up every `Piece` with `status=approved`, `publishAt <= now` and `igMediaId IS NULL` (the idempotency guard — a piece carrying an `igMediaId` is never reprocessed; only a human reset back to `draft`/`approved` re-queues it). Processes pieces **sequentially** and never lets one failure abort the run — each piece is wrapped individually, so a bad caption, unsupported format, or Meta API error only marks that one piece `failed` (with an actionable `lastError`) and continues to the next.
 
-   Format → Graph API container mapping (`lib/instagram.ts`):
-   - `estatico` → single-image post (first/only `PieceImage`)
-   - `stories` → Stories container (first/only `PieceImage` — Stories has no multi-image concept)
-   - `carrossel` → **real multi-image carousel** via `createCarouselContainer`: one child container per image (in `sortOrder`), then a parent `CAROUSEL` container referencing all of them. Requires ≥2 images to approve (`PATCH /api/pieces/[id]` returns 422 `"Carrossel precisa de pelo menos 2 imagens"` otherwise). A `carrossel` piece with exactly 1 image (only possible if it was approved before this feature existed) falls back to a single-image post instead of failing, flagged with a `note` in the publish result.
-   - `reels` → always fails with `"vídeo ainda não suportado"` — no video upload support yet.
+   Format → Graph API container mapping (`lib/instagram.ts`, resolved by `lib/cron-publish.ts`'s `resolveContainerKind`):
+   - `estatico` → single-image post (first/only `PieceImage`); a video attached is unsupported (`"vídeo só é permitido em reels/stories"`).
+   - `stories` → Stories container. The single `PieceImage` is either an image (`createStoryContainer`) or a video (`createVideoStoryContainer`) — Stories has no multi-media concept either way.
+   - `carrossel` → **real multi-image carousel** via `createCarouselContainer`: one child container per image (in `sortOrder`), then a parent `CAROUSEL` container referencing all of them. Requires ≥2 images to approve (`PATCH /api/pieces/[id]` returns 422 `"Carrossel precisa de pelo menos 2 imagens"` otherwise). A `carrossel` piece with exactly 1 image (only possible if it was approved before this feature existed) falls back to a single-image post instead of failing, flagged with a `note` in the publish result. A video attached is unsupported, same as `estatico`.
+   - `reels` → `createReelsContainer` (`media_type=REELS`, `video_url`, `caption`, `share_to_feed=true`, plus `cover_url` when `PieceImage.coverUrl` is set). Requires exactly 1 video `PieceImage`; anything else is unsupported (`"reels exige 1 vídeo (MP4)"`).
 
-   Before calling Meta, re-runs claim-check on caption (violation fails the piece) and rejects local dev uploads (any `PieceImage.url` starting with `/uploads/`, the fallback `POST /api/pieces/[id]/image` uses when `BLOB_READ_WRITE_TOKEN` is unset) — Meta's servers can't fetch a local URL, so pieces fail with actionable guidance to configure Vercel Blob. For a carousel this checks every slide — one unreachable image fails the whole piece.
+   Before calling Meta, re-runs claim-check on caption (violation fails the piece) and rejects local dev uploads (any `PieceImage.url` starting with `/uploads/`, the fallback the image/video upload routes use when `BLOB_READ_WRITE_TOKEN` is unset) — Meta's servers can't fetch a local URL, so pieces fail with actionable guidance to configure Vercel Blob. For a carousel this checks every slide — one unreachable image fails the whole piece.
+
+   **Video containers (reels / stories video)** process asynchronously on Meta's side and can take well over a minute to finish — see "Vídeo (reels/stories)" above for the pending-container/next-run-resume behavior. `GET /api/cron/publish`'s response reports these with `outcome: "pending"` (and a `pending` count alongside `published`/`failed`/`skipped`) while a container is still processing.
 
 2. **Runs insights on Monday only** (UTC weekday detection) — for every `published` Piece from the last 8 weeks with an `igMediaId`, fetches Instagram insights (`lib/instagram.ts`'s `getMediaInsights`, metric set by `format`: feed/carrossel get `reach/saved/likes/comments/shares/views`, stories get `reach/navigation`) and merges into `Piece.metrics`, preserving existing fields. Pieces published less than 48h ago are skipped (metrics settling), not failed. Also records one `AccountSnapshot` (follower count via `getAccountInfo`) per run, independent of piece updates. Same error-isolation: one piece's Meta API failure only skips that piece. If `META_IG_USER_ID`/`META_IG_TOKEN` aren't configured, returns `200 {"skipped": "credentials not configured"}` — non-fatal.
 
@@ -191,7 +206,7 @@ pnpm publish:dry      # another — GETs /api/cron/publish?dry=1 with CRON_SECRE
 
 **Meta setup**: you need an Instagram **Business** or **Creator** account connected to a Facebook Page, a Meta app with the `instagram_content_publish` permission, and a long-lived Page/IG access token — see [Meta's Content Publishing docs](https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/content-publishing). Set `META_IG_USER_ID` and `META_IG_TOKEN` accordingly; `META_TOKEN_EXPIRES_AT` is informational only.
 
-**Status**: `META_IG_USER_ID`/`META_IG_TOKEN` are **not configured in this environment** — a real end-to-end publish is **pending those credentials**. Everything up to that point (idempotency, claim-check, format mapping, local-upload rejection, dry-run) is implemented; once credentials are available, `pnpm publish:dry` without `?dry=1` (a real un-flagged cron hit) validates the first live post.
+**Status**: `META_IG_USER_ID`/`META_IG_TOKEN` are **not configured in this environment** — a real end-to-end publish is **pending those credentials**. Everything up to that point (idempotency, claim-check, format mapping, video upload/registration, local-upload rejection, dry-run) is implemented; once credentials are available, `pnpm publish:dry` without `?dry=1` (a real un-flagged cron hit) validates the first live post.
 
 ## Performance Report
 

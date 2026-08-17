@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
 import { useRouter } from "next/navigation";
+import { upload } from "@vercel/blob/client";
 import { FormatBadge, StatusBadge } from "@/components/Badges";
 import { ImageLightbox } from "@/components/fila/ImageLightbox";
 import { publishCountdown } from "@/lib/format";
@@ -10,6 +11,12 @@ import { publishCountdown } from "@/lib/format";
 export interface PieceImageData {
   id: string;
   url: string;
+  // "image" (default) or "video" — see lib/piece-images.ts's isVideoMedia.
+  // contentType/durationSec/coverUrl are only ever set on video rows.
+  kind: string;
+  contentType: string | null;
+  durationSec: number | null;
+  coverUrl: string | null;
 }
 
 export interface PieceCardData {
@@ -36,6 +43,44 @@ const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_CARROSSEL_IMAGES = 10;
 const MIN_CARROSSEL_IMAGES_TO_APPROVE = 2;
 
+// Video support (reels/stories only). Mirrors lib/validation.ts's
+// ALLOWED_VIDEO_CONTENT_TYPES/MAX_VIDEO_BYTES/MAX_REELS_DURATION_SEC/
+// MAX_STORY_VIDEO_DURATION_SEC — duplicated here client-side the same way
+// ALLOWED_TYPES/MAX_BYTES above duplicate the image limits, so this
+// component doesn't depend on server-only validation internals.
+const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/quicktime"]);
+const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+const MAX_REELS_DURATION_SEC = 900;
+// Soft cap: engagement drops sharply past this, but Meta allows up to
+// MAX_REELS_DURATION_SEC — so we warn instead of blocking the upload.
+const REELS_DURATION_WARN_SEC = 90;
+const MAX_STORY_VIDEO_DURATION_SEC = 60;
+const VIDEO_EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
+  "video/mp4": "mp4",
+  "video/quicktime": "mov",
+};
+
+// Reads a video File's duration client-side via a throwaway <video> element —
+// there's no way to get this from the File object alone, and we need it
+// before upload to enforce per-format duration limits (and to send
+// durationSec alongside the registered video).
+function readVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const videoEl = document.createElement("video");
+    videoEl.preload = "metadata";
+    videoEl.onloadedmetadata = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(videoEl.duration);
+    };
+    videoEl.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Não foi possível ler a duração do vídeo."));
+    };
+    videoEl.src = objectUrl;
+  });
+}
+
 // `readOnly` mirrors the viewer role (session.role === "viewer",
 // app/fila/page.tsx): all editing/mutation affordances (caption/prompt
 // editing, approve/disapprove, image upload/remove/reorder) are hidden,
@@ -46,8 +91,20 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
   const router = useRouter();
 
   const isCarrossel = piece.format === "carrossel";
+  const isReels = piece.format === "reels";
+  const isStories = piece.format === "stories";
+  const isVideoFormat = isReels || isStories;
   const isDraft = piece.status === "draft";
   const canMutateImages = isDraft && !readOnly;
+
+  // reels/stories hold at most one media item, and when present it's a
+  // video row (kind="video" — stories may instead hold a single image, in
+  // which case it flows through imageItems below like carrossel/estatico).
+  // The two never mix within one piece, so this split keeps the existing
+  // image-grid code untouched (it never sees a video row) while giving the
+  // video its own dedicated rendering block.
+  const videoMedia = piece.images.find((image) => image.kind === "video");
+  const imageItems = piece.images.filter((image) => image.kind !== "video");
 
   const [captionValue, setCaptionValue] = useState(piece.caption);
   // Tracks the last caption we've synced from props, so we can reset the
@@ -82,6 +139,14 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
   // Index of the thumbnail being viewed full-screen; null = viewer closed.
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
+  // Video-only upload state (reels/stories). videoProgress is percentage
+  // (0-100) during the direct-to-Blob upload, null when not uploading via
+  // that path (e.g. local-dev multipart fallback has no progress events).
+  const [videoProgress, setVideoProgress] = useState<number | null>(null);
+  const [durationWarning, setDurationWarning] = useState<string | null>(null);
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [coverError, setCoverError] = useState<string | null>(null);
+
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
 
@@ -91,8 +156,21 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
   const promptDirty = promptValue.trim() !== piece.imagePrompt && promptValue.trim().length > 0;
 
   const atCarrosselLimit = isCarrossel && piece.images.length >= MAX_CARROSSEL_IMAGES;
-  const canApprove =
-    piece.images.length >= 1 && (!isCarrossel || piece.images.length >= MIN_CARROSSEL_IMAGES_TO_APPROVE);
+  // reels/stories already hold their single allowed media item — the
+  // dropzone hides until it's removed (mirrors the 409 the upload routes
+  // return when a video already exists).
+  const atSingleMediaLimit = isVideoFormat && piece.images.length >= 1;
+  const atMediaLimit = atCarrosselLimit || atSingleMediaLimit;
+
+  // Mirrors the server-side approval rules in PATCH /api/pieces/[id]:
+  // reels needs exactly 1 video, stories needs exactly 1 media item
+  // (image or video), carrossel needs >= MIN_CARROSSEL_IMAGES_TO_APPROVE,
+  // estatico needs >= 1 image.
+  const canApprove = isReels
+    ? piece.images.length === 1 && videoMedia !== undefined
+    : isStories
+      ? piece.images.length === 1
+      : piece.images.length >= 1 && (!isCarrossel || piece.images.length >= MIN_CARROSSEL_IMAGES_TO_APPROVE);
 
   async function saveCaption() {
     setSavingCaption(true);
@@ -181,17 +259,169 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
     }
   }
 
+  // Probes POST .../video/upload-token with an empty body to learn which
+  // upload path is live: when BLOB_READ_WRITE_TOKEN is unset the route
+  // returns { mode: "local" } immediately (no body parsing). When it *is*
+  // set, the route instead tries to parse our empty body as a real
+  // @vercel/blob/client handshake and fails — any non-"local" response
+  // means Blob is configured, so we proceed to the real upload() call
+  // below, which performs its own (correctly-shaped) handshake against the
+  // same route.
+  async function detectVideoUploadMode(): Promise<"local" | "blob"> {
+    try {
+      const res = await fetch(`/api/pieces/${piece.id}/video/upload-token`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (res.ok) {
+        const body = await res.json().catch(() => null);
+        if (body?.mode === "local") return "local";
+      }
+    } catch {
+      // Network error probing mode — fall through to the blob path, whose
+      // own request will surface a real error if the network is down.
+    }
+    return "blob";
+  }
+
+  async function uploadVideo(file: File) {
+    setUploadError(null);
+    setDurationWarning(null);
+
+    if (!ALLOWED_VIDEO_TYPES.has(file.type)) {
+      setUploadError("Formato de vídeo não suportado. Envie MP4 ou MOV.");
+      return;
+    }
+    if (file.size > MAX_VIDEO_BYTES) {
+      setUploadError("Vídeo maior que 200MB.");
+      return;
+    }
+
+    let duration: number;
+    try {
+      duration = await readVideoDuration(file);
+    } catch {
+      setUploadError("Não foi possível ler a duração do vídeo.");
+      return;
+    }
+    const roundedDuration = Math.round(duration);
+
+    if (isStories && duration > MAX_STORY_VIDEO_DURATION_SEC) {
+      setUploadError(
+        `Vídeo de stories não pode ultrapassar ${MAX_STORY_VIDEO_DURATION_SEC}s (duração: ${roundedDuration}s).`,
+      );
+      return;
+    }
+    if (isReels) {
+      if (duration > MAX_REELS_DURATION_SEC) {
+        setUploadError(
+          `Vídeo de reels não pode ultrapassar ${Math.round(MAX_REELS_DURATION_SEC / 60)} min (duração: ${roundedDuration}s).`,
+        );
+        return;
+      }
+      if (duration > REELS_DURATION_WARN_SEC) {
+        setDurationWarning(
+          `Duração de ${roundedDuration}s — recomendado até ${REELS_DURATION_WARN_SEC}s para reels (o envio vai continuar).`,
+        );
+      }
+    }
+
+    setUploading(true);
+    setVideoProgress(0);
+    try {
+      const mode = await detectVideoUploadMode();
+      if (mode === "local") {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("durationSec", String(roundedDuration));
+        const res = await fetch(`/api/pieces/${piece.id}/video`, { method: "POST", body: formData });
+        const body = await res.json();
+        if (!res.ok) {
+          setUploadError(body.error ?? "Falha ao enviar o vídeo.");
+          return;
+        }
+      } else {
+        const extension = VIDEO_EXTENSION_BY_CONTENT_TYPE[file.type] ?? "mp4";
+        const pathname = `pieces/${piece.id}-video-${Date.now()}.${extension}`;
+        const blob = await upload(pathname, file, {
+          access: "public",
+          handleUploadUrl: `/api/pieces/${piece.id}/video/upload-token`,
+          contentType: file.type,
+          onUploadProgress: ({ percentage }) => setVideoProgress(percentage),
+        });
+        const res = await fetch(`/api/pieces/${piece.id}/video`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            url: blob.url,
+            contentType: file.type,
+            size: file.size,
+            durationSec: roundedDuration,
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok) {
+          setUploadError(body.error ?? "Falha ao registrar o vídeo.");
+          return;
+        }
+      }
+      router.refresh();
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Falha de rede ao enviar o vídeo.");
+    } finally {
+      setUploading(false);
+      setVideoProgress(null);
+    }
+  }
+
+  async function uploadCover(file: File) {
+    setCoverError(null);
+    setCoverUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`/api/pieces/${piece.id}/video/cover`, { method: "POST", body: formData });
+      const body = await res.json();
+      if (!res.ok) {
+        setCoverError(body.error ?? "Não foi possível enviar a capa.");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setCoverError("Falha de rede ao enviar a capa.");
+    } finally {
+      setCoverUploading(false);
+    }
+  }
+
+  function handleCoverChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) void uploadCover(file);
+  }
+
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
-    if (files.length > 0) void uploadFiles(files);
+    if (files.length === 0) return;
+    if (files[0].type.startsWith("video/")) {
+      void uploadVideo(files[0]);
+    } else {
+      void uploadFiles(files);
+    }
   }
 
   function handleDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragActive(false);
     const files = Array.from(e.dataTransfer.files ?? []);
-    if (files.length > 0) void uploadFiles(files);
+    if (files.length === 0) return;
+    if (files[0].type.startsWith("video/")) {
+      void uploadVideo(files[0]);
+    } else {
+      void uploadFiles(files);
+    }
   }
 
   async function removeImage(imageId: string) {
@@ -328,7 +558,33 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
     </>
   );
 
-  const uploadDropzone = canMutateImages && !atCarrosselLimit && (
+  const acceptTypes = isReels
+    ? "video/mp4,video/quicktime"
+    : isStories
+      ? "image/jpeg,image/png,image/webp,video/mp4,video/quicktime"
+      : "image/jpeg,image/png,image/webp";
+
+  const dropzoneTitle = uploading
+    ? videoProgress !== null
+      ? `Enviando... ${videoProgress}%`
+      : "Enviando..."
+    : isReels
+      ? "Selecionar vídeo do reel"
+      : isStories
+        ? "Selecionar imagem ou vídeo"
+        : piece.images.length > 0
+          ? isCarrossel
+            ? "Adicionar imagem"
+            : "Substituir imagem"
+          : "Selecionar imagem";
+
+  const dropzoneHint = isReels
+    ? "Vídeo do reel (MP4/MOV, 9:16, até 200 MB; recomendado ≤ 90 s)"
+    : isStories
+      ? "Imagem (JPEG/PNG/WebP, até 8MB) ou vídeo (MP4/MOV, 9:16, até 60 s, até 200MB)"
+      : `ou arraste ${isCarrossel ? "arquivos" : "um arquivo"} aqui (JPEG, PNG ou WebP, até 8MB)`;
+
+  const uploadDropzone = canMutateImages && !atMediaLimit && (
     <div
       onDragOver={(e) => {
         e.preventDefault();
@@ -341,21 +597,11 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
       }`}
     >
       <label className="flex w-full cursor-pointer flex-col items-center gap-1 text-center">
-        <span className="font-medium text-zinc-700">
-          {uploading
-            ? "Enviando..."
-            : piece.images.length > 0
-              ? isCarrossel
-                ? "Adicionar imagem"
-                : "Substituir imagem"
-              : "Selecionar imagem"}
-        </span>
-        <span className="text-xs text-zinc-400">
-          ou arraste {isCarrossel ? "arquivos" : "um arquivo"} aqui (JPEG, PNG ou WebP, até 8MB)
-        </span>
+        <span className="font-medium text-zinc-700">{dropzoneTitle}</span>
+        <span className="text-xs text-zinc-400">{dropzoneHint}</span>
         <input
           type="file"
-          accept="image/jpeg,image/png,image/webp"
+          accept={acceptTypes}
           multiple={isCarrossel}
           className="hidden"
           onChange={handleFileChange}
@@ -376,10 +622,67 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
       </div>
 
       <div className="flex flex-col gap-2">
-        {piece.images.length > 0 && (
+        {videoMedia && (
+          <div className="flex flex-col gap-2">
+            <div className="relative overflow-hidden rounded-md bg-black">
+              <video
+                controls
+                playsInline
+                muted
+                preload="metadata"
+                poster={videoMedia.coverUrl ?? undefined}
+                className="max-h-80 w-full rounded-md"
+              >
+                <source src={videoMedia.url} type={videoMedia.contentType ?? undefined} />
+              </video>
+              {canMutateImages && (
+                <button
+                  type="button"
+                  onClick={() => removeImage(videoMedia.id)}
+                  disabled={removingImageId === videoMedia.id || uploading}
+                  aria-label="Remover vídeo"
+                  className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-600/90 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            {videoMedia.durationSec != null && (
+              <p className="text-xs text-zinc-500">Duração: {videoMedia.durationSec} s</p>
+            )}
+
+            {isReels && canMutateImages && (
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-zinc-500">Capa (opcional)</span>
+                <div className="flex items-center gap-2">
+                  {videoMedia.coverUrl && (
+                    <div className="h-12 w-12 shrink-0 overflow-hidden rounded-md bg-zinc-100">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- image can come from same-origin /uploads or an arbitrary Vercel Blob host in prod */}
+                      <img src={videoMedia.coverUrl} alt="" className="h-full w-full object-cover" />
+                    </div>
+                  )}
+                  <label className="cursor-pointer rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700">
+                    {coverUploading ? "Enviando..." : videoMedia.coverUrl ? "Trocar capa" : "Enviar capa"}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={handleCoverChange}
+                      disabled={coverUploading}
+                    />
+                  </label>
+                </div>
+                {coverError && <p className="text-sm text-red-600">{coverError}</p>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {imageItems.length > 0 && (
           <div className="flex flex-col gap-1.5">
             <div className="flex gap-2 overflow-x-auto pb-1">
-              {piece.images.map((image, index) => (
+              {imageItems.map((image, index) => (
                 <div key={image.id} className="flex w-20 shrink-0 flex-col gap-1">
                   <div className="relative aspect-square w-20 overflow-hidden rounded-md bg-zinc-100">
                     {/*
@@ -413,7 +716,7 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
                       </button>
                     )}
                   </div>
-                  {canMutateImages && isCarrossel && piece.images.length > 1 && (
+                  {canMutateImages && isCarrossel && imageItems.length > 1 && (
                     <div className="flex gap-1">
                       <button
                         type="button"
@@ -427,7 +730,7 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
                       <button
                         type="button"
                         onClick={() => moveImage(index, 1)}
-                        disabled={index === piece.images.length - 1 || reordering || uploading}
+                        disabled={index === imageItems.length - 1 || reordering || uploading}
                         aria-label="Mover imagem para a direita"
                         className="flex h-9 flex-1 items-center justify-center rounded-md border border-zinc-300 text-sm font-medium text-zinc-700 disabled:opacity-30"
                       >
@@ -448,10 +751,10 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
                 </p>
                 <p
                   className={`text-xs ${
-                    piece.images.length < MIN_CARROSSEL_IMAGES_TO_APPROVE ? "text-amber-700" : "text-zinc-500"
+                    imageItems.length < MIN_CARROSSEL_IMAGES_TO_APPROVE ? "text-amber-700" : "text-zinc-500"
                   }`}
                 >
-                  {piece.images.length} {piece.images.length === 1 ? "imagem" : "imagens"} (mín.{" "}
+                  {imageItems.length} {imageItems.length === 1 ? "imagem" : "imagens"} (mín.{" "}
                   {MIN_CARROSSEL_IMAGES_TO_APPROVE} para aprovar — o prompt sugere 4 slides)
                 </p>
               </>
@@ -460,12 +763,16 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
         )}
 
         {!canMutateImages && !readOnly && piece.images.length > 0 && (
-          <p className="text-xs text-zinc-400">Imagens congeladas após aprovação.</p>
+          <p className="text-xs text-zinc-400">
+            {videoMedia ? "Mídia congelada" : "Imagens congeladas"} após aprovação.
+          </p>
         )}
 
         {atCarrosselLimit && (
           <p className="text-xs text-zinc-400">Limite de {MAX_CARROSSEL_IMAGES} imagens atingido.</p>
         )}
+
+        {durationWarning && <p className="text-sm text-amber-700">{durationWarning}</p>}
 
         {piece.images.length === 0 && !editingPrompt && (
           <div className="rounded-md border border-dashed border-zinc-300 p-3 text-sm text-zinc-600">
@@ -613,9 +920,13 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
                 <span className="text-xs text-zinc-400">
                   {canApprove
                     ? "Pronto para aprovar"
-                    : piece.images.length === 0
-                      ? "Envie uma imagem para aprovar"
-                      : `Envie mais ${MIN_CARROSSEL_IMAGES_TO_APPROVE - piece.images.length} imagem(ns) para aprovar`}
+                    : isReels
+                      ? "Reels exige exatamente 1 vídeo para aprovar"
+                      : isStories
+                        ? "Stories exige 1 imagem ou 1 vídeo (≤ 60 s) para aprovar"
+                        : piece.images.length === 0
+                          ? "Envie uma imagem para aprovar"
+                          : `Envie mais ${MIN_CARROSSEL_IMAGES_TO_APPROVE - piece.images.length} imagem(ns) para aprovar`}
                 </span>
                 <button
                   type="button"
@@ -633,7 +944,7 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
       )}
 
       <ImageLightbox
-        images={piece.images}
+        images={imageItems}
         index={lightboxIndex}
         onIndexChange={setLightboxIndex}
         onClose={() => setLightboxIndex(null)}

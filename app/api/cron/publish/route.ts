@@ -4,6 +4,10 @@ import { runPublish } from "@/lib/cron-publish";
 
 export const runtime = "nodejs";
 
+// See app/api/cron/daily/route.ts's maxDuration comment — same budget
+// applies to a manual run through this route.
+export const maxDuration = 300;
+
 // GET /api/cron/publish[?dry=1]
 // Thin wrapper around runPublish. Kept for manual runs and dry-run testing.
 // Dry-run (?dry=1 or env PUBLISH_DRY_RUN=1): runs every check (claim-check,

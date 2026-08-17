@@ -8,11 +8,15 @@ import { deleteLocalUploadFile } from "@/lib/uploads";
 export const runtime = "nodejs";
 
 // DELETE /api/pieces/[id]/image/[imageId]
-// Removes one image from a draft piece (and its local file, if it was a
-// /uploads/... upload), then resequences the remaining images' sortOrder to
-// stay 0-based and contiguous. Only allowed while status=draft — see
-// POST .../image for the same freeze-after-approval rule. Owner/approver
-// only (lib/session.ts requirePieceEditor) — this route was previously
+// Removes one media item (image or video, kind field — lib/piece-images.ts
+// isVideoMedia) from a draft piece, and its local file(s) if it was a
+// /uploads/... upload — the video's own `url` and, if set, its `coverUrl`
+// thumbnail (POST .../video/cover) are both cleaned up the same way; Blob
+// uploads are left in place either way, same as image uploads always have
+// been. Then resequences the remaining media's sortOrder to stay 0-based
+// and contiguous. Only allowed while status=draft — see POST .../image for
+// the same freeze-after-approval rule. Owner/approver only
+// (lib/session.ts requirePieceEditor) — this route was previously
 // unauthenticated, then owner-only.
 export async function DELETE(
   req: NextRequest,
@@ -42,6 +46,9 @@ export async function DELETE(
   }
 
   await deleteLocalUploadFile(target.url);
+  if (target.coverUrl) {
+    await deleteLocalUploadFile(target.coverUrl);
+  }
   await prisma.pieceImage.delete({ where: { id: imageId } });
 
   const remaining = existing.images.filter((image) => image.id !== imageId);

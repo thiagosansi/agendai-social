@@ -177,8 +177,61 @@ export async function createCarouselContainer({
   return parentId;
 }
 
+export interface CreateReelsContainerInput {
+  videoUrl: string;
+  caption: string;
+  // Either a hosted still-image URL (from PieceImage.coverUrl) or a
+  // millisecond offset into the video itself — mutually exclusive on
+  // Meta's side, so callers should only ever pass one. When neither is
+  // given, Meta derives a cover frame automatically.
+  coverUrl?: string;
+  thumbOffsetMs?: number;
+  shareToFeed?: boolean;
+}
+
+/** Creates a Reels container (video, always fed through /media as media_type=REELS). */
+export async function createReelsContainer({
+  videoUrl,
+  caption,
+  coverUrl,
+  thumbOffsetMs,
+  shareToFeed = true,
+}: CreateReelsContainerInput): Promise<string> {
+  const { igUserId, token } = getConfig();
+  const params: Record<string, string> = {
+    media_type: "REELS",
+    video_url: videoUrl,
+    caption,
+    share_to_feed: String(shareToFeed),
+  };
+  if (coverUrl) {
+    params.cover_url = coverUrl;
+  } else if (thumbOffsetMs !== undefined) {
+    params.thumb_offset = String(thumbOffsetMs);
+  }
+  const { id } = await graphPost<{ id: string }>(`/${igUserId}/media`, token, params);
+  return id;
+}
+
+export interface CreateVideoStoryContainerInput {
+  videoUrl: string;
+}
+
+/** Creates a Stories container for a video (no caption support on Stories, same as the image variant). */
+export async function createVideoStoryContainer({
+  videoUrl,
+}: CreateVideoStoryContainerInput): Promise<string> {
+  const { igUserId, token } = getConfig();
+  const { id } = await graphPost<{ id: string }>(`/${igUserId}/media`, token, {
+    media_type: "STORIES",
+    video_url: videoUrl,
+  });
+  return id;
+}
+
 interface ContainerStatus {
   status_code?: "IN_PROGRESS" | "FINISHED" | "ERROR" | "EXPIRED" | "PUBLISHED";
+  status?: string;
 }
 
 /**
@@ -219,6 +272,44 @@ export async function publishContainer(containerId: string): Promise<PublishedMe
   return { mediaId: id };
 }
 
+export interface ContainerStatusResult {
+  statusCode: "IN_PROGRESS" | "FINISHED" | "ERROR" | "EXPIRED" | "PUBLISHED";
+  status?: string;
+}
+
+/**
+ * Fetches a container's current processing status without waiting/polling —
+ * used by lib/cron-publish.ts's own budget-aware polling loop for video
+ * containers (reels/story_video), which can take well over
+ * waitForContainerReady's fixed retry budget to finish processing and may
+ * need to resume across multiple cron runs.
+ */
+export async function getContainerStatus(containerId: string): Promise<ContainerStatusResult> {
+  const { token } = getConfig();
+  const result = await graphGet<ContainerStatus>(`/${containerId}`, token, {
+    fields: "status_code,status",
+  });
+  if (!result.status_code) {
+    throw new InstagramApiError(`container ${containerId} returned no status_code`);
+  }
+  return { statusCode: result.status_code, status: result.status };
+}
+
+/**
+ * Publishes a container that the caller has already confirmed is
+ * FINISHED (via getContainerStatus) — unlike publishContainer, this never
+ * polls internally. Used for video containers, whose own poll loop lives in
+ * lib/cron-publish.ts so it can respect a per-run time budget instead of
+ * publishContainer's fixed CONTAINER_READY_POLL_ATTEMPTS.
+ */
+export async function publishFinishedContainer(containerId: string): Promise<PublishedMedia> {
+  const { igUserId, token } = getConfig();
+  const { id } = await graphPost<{ id: string }>(`/${igUserId}/media_publish`, token, {
+    creation_id: containerId,
+  });
+  return { mediaId: id };
+}
+
 /** Returns the public permalink for a published media, or null if absent. */
 export async function getMediaPermalink(mediaId: string): Promise<string | null> {
   const { token } = getConfig();
@@ -251,10 +342,6 @@ const FEED_INSIGHTS_METRICS = ["reach", "saved", "likes", "comments", "shares", 
 // replaced the older tap-forward/tap-back/exit breakdown metrics.
 const STORY_INSIGHTS_METRICS = ["reach", "navigation"];
 
-// Reels: not published by this app yet (see README "Publicação" — reels
-// always fails with "vídeo ainda não suportado"), kept here so the insights
-// cron degrades gracefully instead of crashing if a Reels media ever shows
-// up (e.g. after a future feature adds video support).
 const REELS_INSIGHTS_METRICS = ["reach", "saved", "likes", "comments", "shares", "plays"];
 
 function metricsForProductType(mediaProductType: MediaProductType): string[] {
