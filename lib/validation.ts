@@ -167,14 +167,30 @@ export type PatchSettingsInput = z.infer<typeof patchSettingsSchema>;
 // 3-30 chars. "admin" is reserved for the owner (lib/session.ts's
 // OWNER_USERNAME) and rejected here so a viewer row can never collide with
 // the owner's identity.
+//
+// The messages here are user-facing: POST /api/users surfaces the first zod
+// issue verbatim, and the Config page renders it under the form. Keep them in
+// Portuguese and actionable, and keep them in sync with the hints next to the
+// fields in components/config/ViewersControls.tsx.
 export const usernameSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .regex(/^[a-z0-9._]{3,30}$/, "username inválido")
-  .refine((username) => username !== "admin", "username reservado");
+  .regex(
+    /^[a-z0-9._]{3,30}$/,
+    "Usuário inválido: use 3 a 30 caracteres, apenas letras minúsculas, números, ponto ou _.",
+  )
+  .refine((username) => username !== "admin", 'Usuário reservado: "admin" é a conta do dono.');
 
-export const viewerPasswordSchema = z.string().min(8).max(200);
+export const MIN_VIEWER_PASSWORD_LENGTH = 8;
+
+export const viewerPasswordSchema = z
+  .string()
+  .min(
+    MIN_VIEWER_PASSWORD_LENGTH,
+    `A senha precisa ter pelo menos ${MIN_VIEWER_PASSWORD_LENGTH} caracteres.`,
+  )
+  .max(200, "A senha pode ter no máximo 200 caracteres.");
 
 // ViewerUser.role values (prisma/schema.prisma), kept in sync with
 // lib/session.ts's SessionRole minus "owner" (the owner is not a

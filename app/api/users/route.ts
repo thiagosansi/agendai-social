@@ -53,8 +53,17 @@ export async function POST(req: NextRequest) {
 
   const parsed = createViewerUserSchema.safeParse(body);
   if (!parsed.success) {
+    // Surface the first issue's message rather than a bare "invalid body":
+    // this endpoint is driven by a human filling in a form on /config, and
+    // the Config page renders `error` directly. The schemas in
+    // lib/validation.ts carry Portuguese, actionable messages for exactly
+    // this reason. `issues` stays in the payload for debugging.
+    const firstIssue = parsed.error.issues[0];
     return Response.json(
-      { error: "invalid body", issues: parsed.error.issues },
+      {
+        error: firstIssue?.message ?? "Dados inválidos.",
+        issues: parsed.error.issues,
+      },
       { status: 400 },
     );
   }

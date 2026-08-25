@@ -3,6 +3,13 @@
 import { useState } from "react";
 import { formatDateSP } from "@/lib/format";
 
+// Mirrors viewerPasswordSchema in lib/validation.ts, which stays the
+// authority — the server rejects a short password regardless. Duplicated
+// rather than imported because that module builds its zod schemas at module
+// scope, so importing it from a client component ships zod to the browser
+// (same reason PieceCard.tsx keeps its own copy of the upload limits).
+const MIN_VIEWER_PASSWORD_LENGTH = 8;
+
 // Kept as a local literal union (rather than importing lib/validation's
 // UserRole) — this component only needs the two values, and importing from
 // lib/validation would pull zod into a client bundle for no benefit.
@@ -106,6 +113,17 @@ export function ViewersControls({ initialUsers }: { initialUsers: ViewerUserData
   }
 
   async function createUser() {
+    // Checked here as well as on the server: the password input's minLength
+    // attribute only fires during native form submission, and this is a plain
+    // button with an onClick handler — so without this the short password
+    // makes a pointless round trip just to come back rejected.
+    if (password.length < MIN_VIEWER_PASSWORD_LENGTH) {
+      setCreateError(
+        `A senha precisa ter pelo menos ${MIN_VIEWER_PASSWORD_LENGTH} caracteres.`,
+      );
+      return;
+    }
+
     setCreating(true);
     setCreateError(null);
     try {
@@ -258,6 +276,9 @@ export function ViewersControls({ initialUsers }: { initialUsers: ViewerUserData
             onChange={(e) => setPassword(e.target.value)}
             className="rounded-md border border-zinc-300 px-2 py-1.5 text-sm text-zinc-900"
           />
+          <p className="text-xs text-zinc-500">
+            Mínimo {MIN_VIEWER_PASSWORD_LENGTH} caracteres
+          </p>
         </div>
 
         <div className="flex flex-col gap-1">
