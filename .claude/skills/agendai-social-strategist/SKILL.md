@@ -57,7 +57,11 @@ verdade — é viés sobre dados e regras já definidos em outro lugar.
    de teste fora do padrão vencedor** (novo pilar, novo formato ou novo
    ângulo de hook) — nunca otimize 100% para o combo que já ganhou, ou o
    conteúdo satura. Nunca reutilize um hook (mesma frase de abertura ou
-   variação óbvia dela) usado nas últimas 6 semanas.
+   variação óbvia dela) usado nas últimas 6 semanas. Hipótese: "Como
+   [observação nos dados], acreditamos que [mudança única] vai [resultado em
+   métrica coletada]" — isole **1 variável por variação** (só hook, só
+   estrutura ou só CTA, nunca dois) e só descarte após a evidência mínima da
+   tabela de métricas (≥3 peças).
 6. **Só métricas que o app coleta.** Ver seção "Como usar métricas" abaixo
    para a lista exata. Nunca mencione "profile views", dado demográfico
    (idade/gênero/localização do público) ou "melhor horário para postar" —
@@ -118,6 +122,15 @@ Nunca prometa resultado no hook ("agenda cheia", "fatura mais") — o
 contraste antes/depois é sobre o *processo* (responder WhatsApp vs. link
 público), não sobre faturamento.
 
+Três regras rápidas de escolha: **hook promete, corpo entrega** (nunca abra
+um loop ou liste algo que a legenda não desenvolve); **escolha a fórmula
+pela temperatura da audiência** — fria (não segue ainda) puxa para
+curiosidade/dor específica/número-lista, quente (já segue) puxa para
+bastidor-POV/mito vs realidade/pergunta direta; **a 1ª linha precisa
+funcionar sozinha** fora de contexto, sem o resto da legenda. Aprofundamento
+de cada fórmula (princípio psicológico, uso por formato/pilar/temperatura,
+variações e contra-exemplos) em `references/hooks.md`.
+
 ---
 
 ## Estrutura de legenda
@@ -135,6 +148,16 @@ público), não sobre faturamento.
 6. **Máx. 1 emoji** em toda a legenda, nunca forçado.
 7. **Tom**: empreendedor para empreendedor, curto — se não cabe numa tela
    de celular sem rolar, está longo demais.
+
+Toda menção a feature (item 3) precisa vir seguida da ponte **"ou
+seja..."** com o benefício concreto — feature sem "e daí?" respondido não
+entra na legenda final. Depois de escrever, rode o **teste "e daí?"** frase
+a frase: se uma frase não sobrevive à pergunta, corte ou complete com a
+consequência que faltava. Frameworks completos de corpo de legenda (PAS,
+BAB), regras de especificidade/escaneabilidade e os limites da psicologia
+permitida estão em `references/legenda.md`; o protocolo de edição em 7
+passadas e a tabela de cortes word-level estão em
+`references/edicao-copy.md`.
 
 ---
 
@@ -166,39 +189,93 @@ público), não sobre faturamento.
   linha da legenda), 1 ideia por slide, último slide = CTA padrão. Boa
   distribuição recompensa quem completa o deslizar — não economize slides
   a ponto de a ideia ficar incompleta, nem estufe além do necessário.
+  Escolha a estrutura **antes** de escrever qualquer slide — 5 opções
+  (Pilha de valor, Problema-Prova, Lista de dicas, Mito e verdade,
+  Passo-a-passo), arco slide-a-slide de cada uma em `references/formatos.md`.
 - **Estático**: 1 ideia só, texto overlay curto (uma frase, não um
   parágrafo). A legenda carrega o desenvolvimento que a imagem não cabe.
 - **Stories** (sequência de 3-5 frames): usar navegação (tap-forward
   natural pela sequência), enquete ou caixa de pergunta em pelo menos 1
-  frame para gerar interação ativa. Último frame = CTA.
-- **Reels**: gancho nos 3 segundos iniciais (texto na tela, não só
-  narração). Legenda curta — o peso do Reel é o vídeo, não o texto.
+  frame (no meio do arco, nunca no último) para gerar interação ativa.
+  Último frame = CTA.
+- **Reels**: gancho nos 3 segundos iniciais — hook visual, verbal e
+  overlay de texto **simultâneos**, não só narração. Legenda curta — o
+  peso do Reel é o vídeo, não o texto. 3 estruturas (Problema-Solução,
+  Lista, Tutorial) em `references/formatos.md`.
   **Personagens LARA/CAMILA/JÚLIA só aparecem em Reels**, com as
   descrições **verbatim** de `docs/01-produto-referencia.md` §8 — nunca em
   carrossel, estático ou stories (regra do playbook §3, item 6).
 
 ---
 
-## Direção de imagePrompt
+## Direção de imagePrompt e overlay
 
-O agente nunca gera nem sobe a imagem — o `imagePrompt` precisa ser
-específico o bastante para o dono produzir ou escolher a imagem certa na
-aprovação.
+O app gera a **foto** automaticamente, server-side, a partir do
+`imagePrompt` (modelo FLUX.2 Klein via Cloudflare Workers AI) e depois
+**compõe o texto por cima** dessa foto a partir de `overlayText`/
+`overlayTexts` — o dono não sobe nada na criação da peça, só
+revisa/regenera a foto/reaplica o texto/substitui na aprovação. São dois
+campos com responsabilidades diferentes: `imagePrompt`/`imagePrompts`
+descrevem só a **cena** (em inglês, para o modelo de imagem);
+`overlayText`/`overlayTexts` carregam o **texto** que aparece sobre a
+foto (em pt-BR, para o app compor). Nunca misture os dois — o prompt de
+cena nunca pede texto, e o texto nunca vai dentro do prompt.
 
+### Cena (imagePrompt/imagePrompts)
+
+- **Idioma**: sempre **em inglês** — o modelo é inglês-first e responde
+  melhor a prompts descritivos e concretos nesse idioma (cena, sujeito,
+  luz, ângulo, estilo de foto real).
 - **Estilo wellness**: sage green + off-white, luz natural, ambiente real
   (salão/spa/estúdio de verdade) — nunca "cara de IA" nem banco de imagens
-  genérico de tech.
-- **Proporção**: 1:1 ou 4:5 para feed (carrossel/estático); 9:16 para
-  stories/reels.
-- **Overlay de texto**: descrever o texto exato que deve aparecer na
-  imagem (se houver), não deixar "algum texto sobre o problema".
-- **Prints reais quando disponíveis**: se o ambiente de execução tiver
-  acesso à pasta `Imagens/` do repositório principal (`agendatmstudio`,
-  citada em `docs/01-produto-referencia.md` §7), citar o print exato (ex.:
-  "print real da tela de Agenda do Portal da Equipe,
-  `Portal do profissional/Agenda.jpeg`"). Sem esse acesso, descrever a
-  cena com detalhe suficiente (composição, objetos, ângulo) para não
-  resultar em visual genérico.
+  genérico de tech. Feche o prompt com uma instrução explícita contra
+  visual genérico (ex.: `"no AI look, real photography style"`).
+- **Proporção**: feed (`carrossel`/`estatico`) é 4:5 (1024x1280);
+  `stories` é 9:16 (1080x1920) — cite a proporção no prompt.
+- **Sem texto no prompt, nunca.** Não peça nenhum texto, letra, placa,
+  logo ou marca d'água na cena — o modelo erra ortografia em português
+  (ex.: "Confirmação" vira "Confimação", "grátis" vira "cráis") e inventa
+  texto em telas de app. O app já acrescenta automaticamente uma
+  instrução "no text" ao prompt enviado ao modelo; o prompt escrito aqui
+  também não deve pedir texto por conta própria. O texto que a peça
+  precisa vai em `overlayText`/`overlayTexts` (ver abaixo), nunca aqui.
+- **Evite telas legíveis**: o modelo inventa interface e números quando a
+  cena foca em tela de celular/computador. Prefira ambiente, pessoas,
+  mãos, objetos e detalhes do salão/spa; se aparecer uma tela, deixe
+  desfocada ao fundo, nunca como foco da composição. (Prints reais do
+  produto não são gerados pelo modelo hoje — fica para o futuro.)
+- **Carrossel**: use `imagePrompts` (array, 2 a 10 itens, **um prompt
+  executável por slide, na mesma ordem dos slides**, cada um seguindo as
+  regras acima — cena só, sem texto). Mantenha consistência visual entre
+  os slides (mesmo ambiente, mesma paleta). `imagePrompt` nesse caso vira
+  o **resumo da direção visual comum** (paleta, ambiente, estilo
+  compartilhado) e serve de fallback — se `imagePrompts` faltar, o app
+  gera só a capa e avisa isso na fila.
+- **Prints reais como referência de composição** (não como conteúdo
+  gerado): se o ambiente de execução tiver acesso à pasta `Imagens/` do
+  repositório principal (`agendatmstudio`, citada em
+  `docs/01-produto-referencia.md` §7), citar o print como referência é
+  opcional (ex.: "referência: print real da tela de Agenda do Portal da
+  Equipe, `Portal do profissional/Agenda.jpeg`") — mas o prompt ainda
+  precisa descrever a cena por extenso, porque o modelo de imagem não tem
+  acesso ao arquivo, e mesmo com referência a tela final deve sair
+  desfocada/fora de foco (regra acima).
+
+### Texto na imagem (overlayText/overlayTexts)
+
+- **Campos próprios, pt-BR verbatim** — nunca dentro do `imagePrompt`. O
+  app compõe o texto por cima da foto gerada (fonte Inter Bold, branco,
+  sobre um gradiente escuro suave no topo da imagem); a foto em si sai
+  sempre limpa.
+- `overlayText`: string única (até 200 caracteres), usada em `estatico` e
+  `stories`.
+- `overlayTexts`: array com **um item por slide, na mesma ordem e no
+  mesmo tamanho de `imagePrompts`** (carrossel) — string vazia (`""`)
+  marca slide sem overlay. Só é aceito quando `format` é `carrossel`.
+- **Regras editoriais**: 3 a 8 palavras por linha, no máximo 2 linhas
+  (quebra manual com `\n` quando precisar de 2 linhas), sem emoji,
+  ortografia impecável. Slide 1 = hook (mesma ideia da 1ª linha da
+  legenda), último slide = CTA padrão.
 
 ---
 
@@ -223,6 +300,15 @@ Mapeamento heurístico (hipótese até confirmar com ≥3 peças do mesmo combo)
 | **Reels: plays alto, reach baixo** | Vídeo prende quem já viu, mas não sai da base | Testar hook de 3s mais forte (curiosidade ou pergunta direta) no próximo Reel |
 | **Janela de settling** | Métricas de mídia levam ~48h para estabilizar | Nunca tirar conclusão de peça publicada há menos de 48h |
 | **Mínimo de dados** | 1-2 peças não sustentam recomendação forte | Exigir **≥3 peças do mesmo combo pilar+formato** antes de tratar como padrão vencedor — abaixo disso, marcar como hipótese |
+
+**Sinal → diagnóstico de copy** (liga o número à causa de escrita, não só à ação):
+
+| Sinal | Diagnóstico | Corrigir em |
+|---|---|---|
+| Shares baixo em pilar de identificação | Hook fala do produto, não da pessoa | `references/hooks.md` (pergunta direta/POV) |
+| Saved baixo em conteúdo educativo | Falta especificidade acionável (dica genérica) | `references/legenda.md` §Especificidade |
+| Reach baixo com engajamento bom | Hook exige contexto prévio, não funciona sozinho | `references/hooks.md` princípio 2 |
+| Comments zero com engajamento bom | Legenda não faz pergunta nem abre conversa | `references/edicao-copy.md` passada 7 |
 
 **Formato de saída de cada recomendação** (usar isso ao reportar análise de
 `/api/report/latest`) — mesmas chaves e valores exigidos pelo schema real
@@ -259,14 +345,30 @@ acima). Para o schema completo de persistência (`POST /api/analysis`,
 - [ ] No máximo 1 emoji.
 - [ ] Personagens LARA/CAMILA/JÚLIA só se o formato for Reels, descrições
       verbatim de `docs/01-produto-referencia.md` §8.
-- [ ] `imagePrompt` específico (estilo, proporção, overlay exato, print
-      real se disponível) — nada genérico.
+- [ ] `imagePrompt` executável, em inglês, específico (cena, luz, paleta,
+      proporção) — nada genérico, **sem nenhum pedido de texto/letra/placa/
+      logo** e sem tela de celular/computador legível em foco.
+- [ ] `overlayText`/`overlayTexts` verbatim em pt-BR (3-8 palavras por
+      linha, no máximo 2 linhas, sem emoji, ortografia impecável). Em
+      carrossel, `overlayTexts` tem o mesmo tamanho de `imagePrompts`
+      (1 item por slide, na ordem, `""` para slide sem overlay).
 - [ ] Combo pilar+segmento não usado nas últimas 6 semanas; feature
       protagonista não usada nas últimas 4 semanas (checar via
       `GET /api/pieces?since=6w`, playbook §2).
 - [ ] Se a peça vier de uma análise de métricas: recomendação tem
       evidência ou está marcada como hipótese; pelo menos 1 sugestão de
       teste fora do padrão vencedor.
+- [ ] Passada de edição feita (7 sweeps de `references/edicao-copy.md`:
+      clareza, voz e tom, "e daí?", prova, especificidade, emoção, zero
+      fricção pré-CTA).
+- [ ] Primeira linha (hook) funciona sozinha, fora de contexto, sem o
+      resto da legenda.
+- [ ] Toda feature mencionada tem a ponte "ou seja"/benefício concreto
+      (`references/legenda.md` §"Ponte 'ou seja...'") — nenhuma feature
+      solta sem consequência explicada.
+- [ ] Zero jargão de SaaS/gestão (ex.: "otimizar", "solução robusta",
+      "ecossistema", "funil") — linguagem que a dona do salão usaria no
+      balcão, não pitch de investidor.
 
 ---
 
@@ -289,10 +391,29 @@ agendai.space — 30 dias grátis, sem cartão.
 #agendaí #spa #massoterapia #gestãodenegócio #agendamentoonline #donadenegócio #wellness
 ```
 
-`imagePrompt`: "Foto real de recepção de spa, luz natural entrando pela
-janela, mesa em tom off-white com planta sage green ao lado de um
-smartphone mostrando a tela do link público de agendamento. Proporção 1:1.
-Sem overlay de texto — a legenda carrega o gancho."
+`imagePrompt` (resumo/fallback, em inglês, só cena): "Real spa reception
+interior, warm natural light through a window, off-white table with a
+sage green plant beside a closed notebook, calm minimal wellness
+aesthetic, real photography style, no AI look. Aspect ratio 4:5,
+1024x1280."
+
+`imagePrompts` (1 item por slide, na ordem — carrossel, só cena, sem
+texto):
+1. "Real spa reception interior, warm natural light through a large
+   window, off-white walls, sage green plants, empty inviting space,
+   real photography style, no AI look. Aspect ratio 4:5, 1024x1280."
+2. "Close-up of a hand holding a smartphone on an off-white table with a
+   sage green plant nearby, screen turned away from camera and out of
+   focus, soft natural light, real photography style, no AI look. Aspect
+   ratio 4:5, 1024x1280."
+3. "Minimal off-white background with a single sage green plant in
+   frame, soft natural light, clean wellness aesthetic, real photography
+   style, no AI look. Aspect ratio 4:5, 1024x1280."
+
+`overlayTexts` (mesmo tamanho de `imagePrompts`, 1 item por slide):
+1. "Domingo, 23h: cliente\npedindo horário pra terça"
+2. "Ela marca sozinha,\nsem esperar você responder"
+3. "agendai.space — 30 dias\ngrátis, sem cartão"
 
 ### Estático — pilar objeção→resposta, segmento studio de unha/cílio/sobrancelha
 
@@ -308,10 +429,12 @@ agendai.space — 30 dias grátis, sem cartão.
 #studiodeunhas #cílios #sobrancelhas #autônoma #agendamentoonline #gestãodenegócio
 ```
 
-`imagePrompt`: "Foto real de manicure/lash designer atendendo uma cliente
-em estúdio pequeno, tom sage green na parede, luz natural, sem pessoas de
-banco de imagens. Overlay de texto curto no topo: 'Trabalho sozinha, mas
-não paro pra responder mensagem'. Proporção 4:5."
+`imagePrompt` (em inglês, só cena): "Real photo of a lash/nail technician
+attending a client in a small studio, sage green wall in the background,
+warm natural light, real photography style, no AI look. Aspect ratio 4:5,
+1024x1280."
+
+`overlayText`: "Trabalho sozinha, mas não\nparo pra responder mensagem"
 
 ### Stories — pilar equipe, segmento salão/barbearia (sequência de 4 frames)
 
@@ -323,9 +446,16 @@ Ficou com dúvida de como funciona? Manda aqui 👇 [caixa de pergunta]
 agendai.space — 30 dias grátis, sem cartão
 ```
 
-`imagePrompt`: "4 frames verticais 9:16. Frame 1: tela de celular real
-mostrando o Portal da Equipe (print `Portal do profissional/Home.jpeg` se
-disponível) com sticker de enquete sobreposto. Frame 2-3: foto real de
-profissional de salão consultando o celular na área de trabalho, luz
-natural, tom sage green/off-white. Frame 4: card final com fundo off-white,
-texto 'agendai.space — 30 dias grátis, sem cartão'."
+`imagePrompt` (em inglês, só cena; `stories` não usa `imagePrompts` — é
+um único prompt executável, mesmo descrevendo múltiplos frames dentro da
+mesma imagem 9:16; `stories` usa `overlayText`, não `overlayTexts`, então
+o texto do frame 4 vai no campo de overlay, nunca no prompt): "Vertical
+9:16 composite image with four stacked panels on an off-white background
+with sage green accents, real photography style, no AI look. Panel 1:
+close-up of a hand holding a smartphone, screen turned away from camera
+and out of focus. Panels 2-3: real photo of a salon professional
+checking their phone at the front desk, warm natural light. Panel 4:
+clean off-white card with a single sage green plant, soft natural light.
+Aspect ratio 9:16, 1080x1920."
+
+`overlayText`: "agendai.space — 30 dias\ngrátis, sem cartão"
