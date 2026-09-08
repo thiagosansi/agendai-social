@@ -8,12 +8,52 @@ export const PIECE_FORMATS = ["carrossel", "reels", "estatico", "stories"] as co
 // exclusively set by the daily publish cron (a later task).
 export const CLIENT_SETTABLE_STATUSES = ["draft", "approved"] as const;
 
+// Piece.imageGenStatus lifecycle (prisma/schema.prisma): idle -> queued ->
+// running -> done/failed. Only meaningful for the automated image
+// generation pipeline (a later task); kept here so callers importing
+// validation types don't need to hand-roll the union.
+export const IMAGE_GEN_STATUSES = ["idle", "queued", "running", "done", "failed"] as const;
+export type ImageGenStatus = (typeof IMAGE_GEN_STATUSES)[number];
+
+// POST /api/pieces/[id]/image/generate (JSON body, optional — an
+// empty/absent body defaults to "replace"). "replace" deletes every
+// existing generated image and regenerates the full set; "resume" only
+// fills in the slide indices that don't have an image yet (same
+// idempotent-by-sortOrder behavior generatePieceImages already has for the
+// automatic pipeline). "recompose" never calls the image provider — it
+// reapplies the piece's current overlayText/overlayTexts on top of each
+// existing PieceImage.sourceUrl (see lib/image-generation.ts's
+// recomposePieceImages), so it works even without an image provider
+// configured.
+export const generateImagesSchema = z.object({
+  mode: z.enum(["replace", "resume", "recompose"]).optional().default("replace"),
+});
+
+export type GenerateImagesInput = z.infer<typeof generateImagesSchema>;
+
+// imagePrompts: one prompt per carrossel slide, for the automated image
+// generation pipeline. Only accepted when format=carrossel — enforced in
+// the route (needs the piece's format), not here. 2-10 mirrors
+// MIN/MAX_CARROSSEL_IMAGES_TO_APPROVE below.
+const imagePromptsSchema = z.array(z.string().trim().min(1)).min(2).max(10);
+
+// overlayText/overlayTexts: the text the app draws on top of the piece's
+// photo(s) — see prisma/schema.prisma's Piece.overlayText for why this isn't
+// left to the image model. 200 chars is generous for a short hook/caption
+// overlay; "" is a valid overlayTexts entry (that slide gets no text).
+export const MAX_OVERLAY_TEXT_LEN = 200;
+const overlayTextSchema = z.string().trim().max(MAX_OVERLAY_TEXT_LEN);
+const overlayTextsSchema = z.array(overlayTextSchema).max(10);
+
 export const createPieceSchema = z.object({
   pillar: z.string().trim().min(1, "pillar is required"),
   segment: z.string().trim().min(1, "segment is required"),
   format: z.enum(PIECE_FORMATS),
   caption: z.string().trim().min(1, "caption is required"),
   imagePrompt: z.string().trim().min(1, "imagePrompt is required"),
+  imagePrompts: imagePromptsSchema.optional(),
+  overlayText: overlayTextSchema.optional(),
+  overlayTexts: overlayTextsSchema.optional(),
   publishAt: z.coerce.date({ error: "publishAt must be a valid date" }),
 });
 
@@ -23,11 +63,15 @@ export const patchPieceSchema = z
   .object({
     caption: z.string().trim().min(1).optional(),
     imagePrompt: z.string().trim().min(1).optional(),
+    imagePrompts: imagePromptsSchema.optional(),
+    overlayText: overlayTextSchema.optional(),
+    overlayTexts: overlayTextsSchema.optional(),
     publishAt: z.coerce.date().optional(),
     status: z.enum(CLIENT_SETTABLE_STATUSES).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
-    message: "at least one of caption, imagePrompt, publishAt, status must be provided",
+    message:
+      "at least one of caption, imagePrompt, imagePrompts, overlayText, overlayTexts, publishAt, status must be provided",
   });
 
 export type PatchPieceInput = z.infer<typeof patchPieceSchema>;

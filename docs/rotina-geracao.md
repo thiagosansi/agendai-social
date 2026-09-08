@@ -161,23 +161,62 @@ Siga estes passos, nesta ordem, sem pular nenhum:
      final do texto da legenda — não há campo separado de hashtags no
      modelo de dados). Todo claim factual vem exclusivamente de
      01-produto-referencia.md.
-   - `imagePrompt`: descrição detalhada o suficiente para o dono gerar ou
-     escolher a imagem certa — composição, estilo (wellness: sage green +
-     off-white, luz natural, ambiente real, nunca clichê de banco de
-     imagens ou "cara de IA" genérica), conteúdo exato de qualquer overlay
-     de texto, proporção (1:1 ou 4:5 para carrossel/estático, 9:16 para
-     stories/reels). Se tiver acesso a screenshots reais do produto (pasta
-     `Imagens/` no repositório principal agendatmstudio, quando acessível),
-     cite o print exato; caso contrário, descreva a cena com detalhe
-     suficiente.
-     Para `reels`, o campo `imagePrompt` vira um **briefing/roteiro de
-     vídeo**, não uma descrição de imagem estática: cena a cena, texto na
-     tela quando houver overlay, duração alvo (≤ 60–90s, nunca acima do
-     `MAX_REELS_DURATION_SEC` de 900s), personagem LARA/CAMILA/JÚLIA quando
-     aplicável (descrições verbatim do 01-produto-referencia §8), formato
-     9:16. O dono grava/edita o MP4 (ou MOV) e faz o upload direto na UI da
-     fila (`/fila`, componente `PieceCard`) na hora de aprovar — o agente
-     nunca gera nem sobe o vídeo em si.
+   - `imagePrompt`: o app gera a foto automaticamente, server-side, a
+     partir deste campo (modelo FLUX.2 Klein via Cloudflare Workers AI) —
+     por isso o prompt precisa ser **executável**, não apenas descritivo
+     para um humano. Escreva **em inglês** (o modelo é inglês-first), de
+     forma concreta e específica: cena, sujeito, luz natural, paleta sage
+     green + off-white, ângulo, estilo de foto real, e feche com uma
+     instrução explícita contra visual genérico de IA (ex.: `"no AI look,
+     real photography style"`). **O prompt descreve só a cena — nunca peça
+     texto, letra, placa, logo ou marca d'água nele.** O modelo erra
+     ortografia em português (ex. "Confirmação" vira "Confimação", "grátis"
+     vira "cráis") e inventa texto em telas de app quando o prompt pede
+     texto; por isso o app já acrescenta automaticamente uma instrução
+     "no text" ao prompt enviado ao modelo, e o prompt escrito pela rotina
+     não deve pedir nenhum texto por conta própria. Evite também cenas com
+     tela de celular/computador **legível** em foco — o modelo inventa
+     interface e números; prefira ambiente, pessoas, mãos, objetos e
+     detalhes do salão/spa, com telas (quando aparecerem) desfocadas ao
+     fundo, nunca como foco da composição. Proporção: feed
+     (`carrossel`/`estatico`) é 4:5 (1024x1280); `stories` é 9:16
+     (1080x1920) — cite a proporção no prompt. Para `carrossel`, use
+     também o campo `imagePrompts` (array de strings, 2 a 10 itens, **um
+     prompt executável por slide, na mesma ordem dos slides**, cada um
+     seguindo as regras acima — cena só, sem texto) — nesse caso
+     `imagePrompt` vira o **resumo da direção visual comum** (paleta,
+     ambiente, estilo compartilhado entre os slides) e serve de fallback:
+     se `imagePrompts` faltar, o app gera só a capa e avisa isso na fila.
+     Mantenha consistência visual entre os slides (mesmo ambiente, mesma
+     paleta). Se tiver acesso a screenshots reais do produto (pasta
+     `Imagens/` no repositório principal agendatmstudio, quando
+     acessível), pode citar o print como referência de composição, mas o
+     prompt ainda precisa descrever a cena por extenso — o modelo de
+     imagem não tem acesso ao arquivo.
+   - `overlayText` (estático e stories) / `overlayTexts` (carrossel): o
+     texto que aparece **sobre** a foto vai nestes campos próprios, em
+     pt-BR **verbatim** — nunca dentro do `imagePrompt`. O app compõe o
+     texto por cima da foto gerada (fonte Inter Bold, branco, sobre um
+     gradiente escuro suave no topo da imagem); a foto em si sai sempre
+     limpa, sem nenhum texto renderizado pelo modelo. Regras editoriais:
+     3 a 8 palavras por linha, no máximo 2 linhas (quebra manual com `\n`
+     permitida quando precisar de 2 linhas), sem emoji, ortografia
+     impecável (é texto pt-BR real, não hallucination do modelo de
+     imagem). `overlayText` é uma única string (até 200 caracteres) usada
+     em `estatico` e `stories`. `overlayTexts` é um array com **um item
+     por slide, na mesma ordem e no mesmo tamanho de `imagePrompts`**
+     (carrossel) — uma string vazia (`""`) marca slide sem overlay; slide
+     1 = hook (mesma ideia da 1ª linha da legenda), último slide = CTA
+     padrão. `overlayTexts` só é aceito quando `format` é `carrossel`.
+     Para `reels`, o campo `imagePrompt` continua sendo um
+     **briefing/roteiro de vídeo** em pt-BR, não um prompt de imagem: cena
+     a cena, texto na tela quando houver overlay, duração alvo (≤ 60–90s,
+     nunca acima do `MAX_REELS_DURATION_SEC` de 900s), personagem
+     LARA/CAMILA/JÚLIA quando aplicável (descrições verbatim do
+     01-produto-referencia §8), formato 9:16. O app gera imagem
+     automaticamente para os outros formatos, mas **não gera vídeo**: o
+     dono grava/edita o MP4 (ou MOV) e faz o upload direto na UI da fila
+     (`/fila`, componente `PieceCard`) na hora de aprovar.
    - `publishAt`: use `nextPublishSlots[i]` do relatório (passo 2) para a
      i-ésima peça desta rodada, VERBATIM — copie a string ISO 8601 UTC tal
      como veio, sem recalcular fuso ou dia da semana. Os slots já vêm
@@ -223,9 +262,34 @@ Siga estes passos, nesta ordem, sem pular nenhum:
    POST {APP_URL}/api/pieces
    Header: Authorization: Bearer {GENERATION_API_TOKEN}
    Header: Content-Type: application/json
-   Body: { "pillar", "segment", "format", "caption", "imagePrompt", "publishAt" }
+   Body: { "pillar", "segment", "format", "caption", "imagePrompt",
+   "imagePrompts"?, "overlayText"?, "overlayTexts"?, "publishAt" } —
+   `imagePrompts` é opcional e só vale para `format: "carrossel"` (array
+   de 2 a 10 strings, um prompt por slide, na ordem); omita o campo para
+   os demais formatos. `overlayText` (string, até 200 caracteres) vale
+   para `estatico`/`stories`; `overlayTexts` (array, mesmo tamanho de
+   `imagePrompts`, um item por slide, string vazia = slide sem overlay)
+   vale só para `carrossel`.
 
-   - Se a resposta for 201: peça criada como draft. Guarde o `id` retornado.
+   - Se a resposta for 201: peça criada como draft, com
+     `imageGenStatus: "queued"` no corpo (quando a geração automática de
+     imagem estiver configurada no app — envs `CLOUDFLARE_ACCOUNT_ID` /
+     `CLOUDFLARE_API_TOKEN`) ou `"idle"` (feature desligada, upload segue
+     manual). Guarde o `id` retornado. A geração roda em background — não
+     é preciso esperar nem chamar nenhum endpoint adicional para ela
+     começar.
+   - Se a resposta for 400 (`{"error":"imagePrompts só é permitido em
+     carrossel"}`): o campo `imagePrompts` foi enviado para um formato
+     diferente de `carrossel` — remova o campo do body e tente de novo.
+   - Se a resposta for 400 (`{"error":"overlayTexts só é permitido em
+     carrossel"}`): o campo `overlayTexts` foi enviado para um formato
+     diferente de `carrossel` — use `overlayText` (string única) nesse
+     caso e tente de novo.
+   - Se a resposta for 400 (`{"error":"overlayTexts deve ter o mesmo
+     tamanho de imagePrompts"}`): o array `overlayTexts` não bate em
+     tamanho com `imagePrompts` (isso também dispara se `overlayTexts`
+     vier sem `imagePrompts` no body) — ajuste os dois arrays para o
+     mesmo número de itens, um por slide, e tente de novo.
    - Se a resposta for 422 (claim-check rejeitou no servidor): leia
      `violations`, corrija a legenda e tente novamente — no máximo 1 nova
      tentativa por peça. Se falhar de novo, NÃO force a peça sem legenda
@@ -303,7 +367,7 @@ Não há outras variáveis obrigatórias para a rotina de geração — `CRON_SE
 
 ## 4. Guard-rails (obrigatórios, sem exceção)
 
-- **Nunca aprova nem publica.** A rotina só cria peças em status `draft` via `POST /api/pieces`. Aprovação (com upload de imagem) e publicação (cron diário via Graph API) são etapas humanas/automatizadas separadas, fora do escopo desta rotina.
+- **Nunca aprova nem publica.** A rotina só cria peças em status `draft` via `POST /api/pieces`. Aprovação (o app gera a foto automaticamente a partir do `imagePrompt`/`imagePrompts` da peça e compõe o texto de `overlayText`/`overlayTexts` por cima; o dono revisa, regenera a foto, reaplica o texto (`mode: "recompose"`) ou substitui por upload manual) e publicação (cron diário via Graph API) são etapas humanas/automatizadas separadas, fora do escopo desta rotina.
 - **Nunca edita código.** A rotina não tem (e não deve ter) permissão de escrita no repositório — nem no produto (`agendatmstudio`), nem no próprio `agendai-social` (nem os docs, nem a UI, nem a API). Ela só lê docs e chama a API HTTP.
 - **Aborta se a API estiver inacessível.** Se `GET /api/report/latest` falhar (rede, 5xx, 401 por token errado), a rotina para imediatamente e não gera nenhuma peça — nunca preenche dados de relatório "de memória" ou inventados.
 - **No máximo `piecesPerRound` peças por rodada** — valor lido de `GET /api/report/latest`, configurável pelo dono em `/config` → "Cadência de postagem" (teto 4; `PECAS_POR_RODADA` era o nome legado desse parâmetro no prompt, antes de virar configuração persistida), salvo override pontual explícito no prompt daquela execução específica. A rotina nunca decide sozinha subir esse número.

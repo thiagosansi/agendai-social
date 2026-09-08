@@ -3,6 +3,8 @@ import { orderedImagesInclude } from "@/lib/piece-images";
 import { PieceCard, type PieceCardData } from "@/components/fila/PieceCard";
 import { ManualRoundButton } from "@/components/fila/ManualRoundButton";
 import { getSession } from "@/lib/session-server";
+import { isImageGenConfigured } from "@/lib/image-gen/provider";
+import { isImageGenActive } from "@/lib/image-generation";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +19,8 @@ export default async function FilaPage() {
     include: orderedImagesInclude,
   });
 
+  const imageGenEnabled = isImageGenConfigured();
+
   const items: PieceCardData[] = pieces.map((piece) => ({
     id: piece.id,
     pillar: piece.pillar,
@@ -24,6 +28,16 @@ export default async function FilaPage() {
     format: piece.format,
     caption: piece.caption,
     imagePrompt: piece.imagePrompt,
+    imagePrompts: piece.imagePrompts,
+    overlayText: piece.overlayText,
+    overlayTexts: piece.overlayTexts,
+    imageGenStatus: piece.imageGenStatus,
+    imageGenError: piece.imageGenError,
+    // Computed server-side (queued, or running with a recent-enough
+    // updatedAt) so the UI doesn't depend on the client's clock — mirrors
+    // POST /api/pieces/[id]/image/generate's own stale-lock check
+    // (lib/image-generation.ts's isImageGenActive/IMAGE_GEN_STALE_RUNNING_MS).
+    imageGenActive: isImageGenActive(piece),
     images: piece.images.map((image) => ({
       id: image.id,
       url: image.url,
@@ -31,6 +45,7 @@ export default async function FilaPage() {
       contentType: image.contentType,
       durationSec: image.durationSec,
       coverUrl: image.coverUrl,
+      sourceUrl: image.sourceUrl,
     })),
     publishAt: piece.publishAt.toISOString(),
     status: piece.status,
@@ -52,7 +67,7 @@ export default async function FilaPage() {
         <ul className="flex flex-col gap-4">
           {items.map((piece) => (
             <li key={piece.id} id={`piece-${piece.id}`}>
-              <PieceCard piece={piece} readOnly={readOnly} />
+              <PieceCard piece={piece} readOnly={readOnly} imageGenEnabled={imageGenEnabled} />
             </li>
           ))}
         </ul>

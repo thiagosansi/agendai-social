@@ -43,3 +43,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local image-gen smoke output (scripts/image-gen-check.mjs)
+/tmp

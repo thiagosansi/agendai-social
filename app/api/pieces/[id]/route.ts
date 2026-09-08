@@ -48,7 +48,30 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     );
   }
 
-  const { caption, imagePrompt, publishAt, status } = parsed.data;
+  const { caption, imagePrompt, imagePrompts, overlayText, overlayTexts, publishAt, status } = parsed.data;
+
+  // imagePrompts (one prompt per carrossel slide) only makes sense for the
+  // carrossel format — every other format drives off imagePrompt alone.
+  if (imagePrompts !== undefined && existing.format !== PieceFormat.carrossel) {
+    return Response.json({ error: "imagePrompts só é permitido em carrossel" }, { status: 400 });
+  }
+
+  // overlayTexts (one overlay per carrossel slide) mirrors imagePrompts.
+  // Pairs against imagePrompts if both are provided in this PATCH, otherwise
+  // against the piece's existing imagePrompts — so `PATCH {overlayTexts}`
+  // alone is allowed as long as it matches what's already stored.
+  if (overlayTexts !== undefined) {
+    if (existing.format !== PieceFormat.carrossel) {
+      return Response.json({ error: "overlayTexts só é permitido em carrossel" }, { status: 400 });
+    }
+    const effectiveImagePrompts = imagePrompts ?? existing.imagePrompts;
+    if (overlayTexts.length !== effectiveImagePrompts.length) {
+      return Response.json(
+        { error: "overlayTexts deve ter o mesmo tamanho de imagePrompts" },
+        { status: 400 },
+      );
+    }
+  }
 
   // Re-run claim-check whenever the caption changes; abort entirely (no
   // partial update) if it fails, same as POST /api/pieces.
@@ -143,6 +166,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const data: Prisma.PieceUpdateInput = {
     ...(caption !== undefined ? { caption, claimCheckPassed } : {}),
     ...(imagePrompt !== undefined ? { imagePrompt } : {}),
+    ...(imagePrompts !== undefined ? { imagePrompts } : {}),
+    ...(overlayText !== undefined ? { overlayText } : {}),
+    ...(overlayTexts !== undefined ? { overlayTexts } : {}),
     ...(publishAt !== undefined ? { publishAt } : {}),
     ...(status !== undefined ? { status } : {}),
   };

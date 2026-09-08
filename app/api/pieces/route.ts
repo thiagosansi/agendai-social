@@ -1,8 +1,10 @@
 import type { NextRequest } from "next/server";
-import { PieceStatus, Prisma } from "@prisma/client";
+import { PieceFormat, PieceStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireGenerationToken } from "@/lib/auth";
 import { checkText, loadRules } from "@/lib/claim-check";
+import { enqueuePieceImageGeneration } from "@/lib/image-generation";
+import { isImageGenConfigured } from "@/lib/image-gen/provider";
 import { notifyPendingApproval, notifySafely } from "@/lib/notifications";
 import { orderedImagesInclude } from "@/lib/piece-images";
 import { setSetting } from "@/lib/settings";
@@ -10,6 +12,12 @@ import { createPieceSchema } from "@/lib/validation";
 import { isoWeekRange, parseSince } from "@/lib/iso-week";
 
 export const runtime = "nodejs";
+
+// The image-generation `after()` callback scheduled below (see POST) runs
+// within this route's execution budget (Vercel Fluid Compute) even though
+// the HTTP response itself returns immediately — 300s covers a full
+// carrossel (up to 10 slides) comfortably.
+export const maxDuration = 300;
 
 // GET /api/pieces?status=&since=
 // Lists pieces ordered by publishAt. Not gated by the generation token — see
@@ -74,7 +82,29 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { pillar, segment, format, caption, imagePrompt, publishAt } = parsed.data;
+  const { pillar, segment, format, caption, imagePrompt, imagePrompts, overlayText, overlayTexts, publishAt } =
+    parsed.data;
+
+  // imagePrompts (one prompt per carrossel slide) only makes sense for the
+  // carrossel format — every other format drives off imagePrompt alone.
+  if (imagePrompts !== undefined && format !== "carrossel") {
+    return Response.json({ error: "imagePrompts só é permitido em carrossel" }, { status: 400 });
+  }
+
+  // overlayTexts (one overlay per carrossel slide) mirrors imagePrompts:
+  // only makes sense for carrossel, and must pair 1:1 with imagePrompts —
+  // there's nothing to pair it against on create if imagePrompts is absent.
+  if (overlayTexts !== undefined) {
+    if (format !== "carrossel") {
+      return Response.json({ error: "overlayTexts só é permitido em carrossel" }, { status: 400 });
+    }
+    if (imagePrompts === undefined || overlayTexts.length !== imagePrompts.length) {
+      return Response.json(
+        { error: "overlayTexts deve ter o mesmo tamanho de imagePrompts" },
+        { status: 400 },
+      );
+    }
+  }
 
   const { ok, violations } = checkText(caption, loadRules());
   if (!ok) {
@@ -106,12 +136,27 @@ export async function POST(req: NextRequest) {
       format,
       caption,
       imagePrompt,
+      imagePrompts: imagePrompts ?? [],
+      overlayText: overlayText ?? null,
+      overlayTexts: overlayTexts ?? [],
       publishAt,
       status: PieceStatus.draft,
       claimCheckPassed: true,
     },
     include: orderedImagesInclude,
   });
+
+  // Kick off automated image generation in the background (never for reels,
+  // which is video-only, and only when an AI image provider is configured —
+  // otherwise the founder falls back to manual upload and imageGenStatus
+  // just stays "idle"). enqueuePieceImageGeneration flips imageGenStatus to
+  // "queued" before we respond, and schedules the actual generation with
+  // next/server's `after` so it runs after this response is sent instead of
+  // holding up the generation routine's POST.
+  if (format !== PieceFormat.reels && isImageGenConfigured()) {
+    await enqueuePieceImageGeneration(piece.id);
+    piece.imageGenStatus = "queued";
+  }
 
   // One-shot override consumed: whether or not this round was manually
   // forced (Fila "Gerar rodada agora"), a successful generation always

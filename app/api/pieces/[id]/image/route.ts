@@ -1,21 +1,12 @@
 import type { NextRequest } from "next/server";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { put } from "@vercel/blob";
 import { PieceFormat, PieceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requirePieceEditor } from "@/lib/session";
 import { orderedImagesInclude } from "@/lib/piece-images";
-import { deleteLocalUploadFile } from "@/lib/uploads";
+import { deleteLocalUploadFile, storePieceMediaBytes } from "@/lib/uploads";
 import { ALLOWED_IMAGE_CONTENT_TYPES, MAX_CARROSSEL_IMAGES, MAX_IMAGE_BYTES } from "@/lib/validation";
 
 export const runtime = "nodejs";
-
-const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-};
 
 // POST /api/pieces/[id]/image (multipart/form-data, field name "file")
 // Adds one image to the piece. `carrossel` pieces accept up to
@@ -92,26 +83,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     );
   }
 
-  const extension = EXTENSION_BY_CONTENT_TYPE[contentType];
   const bytes = new Uint8Array(await file.arrayBuffer());
 
-  let url: string;
-  const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
-
-  if (blobToken) {
-    const blob = await put(`pieces/${id}-${nextSortOrder}-${Date.now()}.${extension}`, Buffer.from(bytes), {
-      access: "public",
-      token: blobToken,
-      contentType,
-    });
-    url = blob.url;
-  } else {
-    const uploadsDir = path.join(process.cwd(), "public", "uploads");
-    await mkdir(uploadsDir, { recursive: true });
-    const filename = `${id}-${nextSortOrder}-${Date.now()}.${extension}`;
-    await writeFile(path.join(uploadsDir, filename), bytes);
-    url = `/uploads/${filename}`;
-  }
+  const url = await storePieceMediaBytes({
+    pieceId: id,
+    sortOrder: nextSortOrder,
+    contentType,
+    bytes,
+  });
 
   await prisma.pieceImage.create({ data: { pieceId: id, url, sortOrder: nextSortOrder } });
 

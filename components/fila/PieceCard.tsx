@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { upload } from "@vercel/blob/client";
+import { Loader2 } from "lucide-react";
 import { FormatBadge, StatusBadge } from "@/components/Badges";
 import { ImageLightbox } from "@/components/fila/ImageLightbox";
 import { publishCountdown } from "@/lib/format";
+import { MAX_OVERLAY_TEXT_LEN } from "@/lib/validation";
+import type { ImageGenStatus } from "@/lib/validation";
 
 export interface PieceImageData {
   id: string;
@@ -17,6 +20,11 @@ export interface PieceImageData {
   contentType: string | null;
   durationSec: number | null;
   coverUrl: string | null;
+  // The clean (no overlay text) source photo the model produced — set only
+  // on generated image rows. When present, "Reaplicar texto" can recompose
+  // the overlay on top of it without calling the model again (see
+  // POST .../image/generate's mode: "recompose").
+  sourceUrl: string | null;
 }
 
 export interface PieceCardData {
@@ -26,6 +34,26 @@ export interface PieceCardData {
   format: string;
   caption: string;
   imagePrompt: string;
+  // Per-slide prompts for the automated image generation pipeline —
+  // carrossel only (see prisma/schema.prisma's Piece.imagePrompts).
+  imagePrompts: string[];
+  // Text drawn on top of the piece's single photo (estatico/stories) —
+  // null/"" means the photo stays clean. See prisma/schema.prisma's
+  // Piece.overlayText.
+  overlayText: string | null;
+  // Per-slide overlay text (carrossel only), same length as imagePrompts —
+  // "" means that slide gets no text. See Piece.overlayTexts.
+  overlayTexts: string[];
+  // imageGenStatus is a plain string column server-side (not a DB enum —
+  // see prisma/schema.prisma), so it's typed loosely here too; ImageGenStatus
+  // (lib/validation.ts) documents the actual value set.
+  imageGenStatus: ImageGenStatus | string;
+  imageGenError: string | null;
+  // Computed server-side by app/fila/page.tsx (isImageGenActive from
+  // lib/image-generation.ts) so the "still generating" UI never depends on
+  // the client's clock — true while queued, or running with a recent
+  // enough updatedAt (stale locks read as failed instead).
+  imageGenActive: boolean;
   images: PieceImageData[];
   publishAt: string;
   status: string;
@@ -87,7 +115,15 @@ function readVideoDuration(file: File): Promise<number> {
 // while thumbnails, the lightbox, captions and the prompt stay visible as
 // plain text. Hooks below stay unconditional (rules of hooks) — only the
 // JSX branches on `readOnly`.
-export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; readOnly?: boolean }) {
+export function PieceCard({
+  piece,
+  readOnly = false,
+  imageGenEnabled = false,
+}: {
+  piece: PieceCardData;
+  readOnly?: boolean;
+  imageGenEnabled?: boolean;
+}) {
   const router = useRouter();
 
   const isCarrossel = piece.format === "carrossel";
@@ -131,6 +167,17 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
   const [promptError, setPromptError] = useState<string | null>(null);
   const [editingPrompt, setEditingPrompt] = useState(false);
 
+  // Overlay text (estatico/stories only — carrossel uses overlayTextsValue
+  // below). Same "adjust state from props" pattern as syncedPrompt; edited
+  // inside the same editingPrompt mode as imagePrompt, saved together in one
+  // PATCH by savePrompt.
+  const [overlayTextValue, setOverlayTextValue] = useState(piece.overlayText ?? "");
+  const [syncedOverlayText, setSyncedOverlayText] = useState(piece.overlayText ?? "");
+  if ((piece.overlayText ?? "") !== syncedOverlayText) {
+    setSyncedOverlayText(piece.overlayText ?? "");
+    setOverlayTextValue(piece.overlayText ?? "");
+  }
+
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -152,8 +199,64 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
 
   const [copied, setCopied] = useState(false);
 
+  // Manual trigger for POST /api/pieces/[id]/image/generate (Gerar
+  // imagens/Continuar/Gerar de novo). generating disables every generation
+  // button while the request is in flight; confirmRegenerate drives the
+  // two-step inline confirmation before replacing existing images (no
+  // window.confirm — this component always renders inline UI).
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
+
+  // Per-slide prompts editor (carrossel only). Same "adjust state from
+  // props" pattern as syncedCaption/syncedPrompt above, but for an array —
+  // primitive !== comparison doesn't work on arrays, so we key on a
+  // stringified snapshot instead.
+  const [imagePromptsValue, setImagePromptsValue] = useState<string[]>(piece.imagePrompts);
+  const [syncedImagePromptsKey, setSyncedImagePromptsKey] = useState<string>(
+    JSON.stringify(piece.imagePrompts),
+  );
+  const currentImagePromptsKey = JSON.stringify(piece.imagePrompts);
+  if (currentImagePromptsKey !== syncedImagePromptsKey) {
+    setSyncedImagePromptsKey(currentImagePromptsKey);
+    setImagePromptsValue(piece.imagePrompts);
+  }
+  const [editingPrompts, setEditingPrompts] = useState(false);
+  const [savingPrompts, setSavingPrompts] = useState(false);
+  const [promptsError, setPromptsError] = useState<string | null>(null);
+
+  // Per-slide overlay text editor (carrossel only), same snapshot-key sync
+  // pattern as imagePromptsValue. Kept in lockstep with imagePromptsValue's
+  // length by addPromptSlide/removePromptSlide so a save always submits
+  // arrays of the same size — legacy pieces whose overlayTexts is shorter
+  // than imagePrompts (or empty) get padded with "" when editing starts.
+  const [overlayTextsValue, setOverlayTextsValue] = useState<string[]>(piece.overlayTexts);
+  const [syncedOverlayTextsKey, setSyncedOverlayTextsKey] = useState<string>(
+    JSON.stringify(piece.overlayTexts),
+  );
+  const currentOverlayTextsKey = JSON.stringify(piece.overlayTexts);
+  if (currentOverlayTextsKey !== syncedOverlayTextsKey) {
+    setSyncedOverlayTextsKey(currentOverlayTextsKey);
+    setOverlayTextsValue(piece.overlayTexts);
+  }
+
   const captionDirty = captionValue.trim() !== piece.caption && captionValue.trim().length > 0;
-  const promptDirty = promptValue.trim() !== piece.imagePrompt && promptValue.trim().length > 0;
+  const overlayTextDirty = overlayTextValue.trim() !== (piece.overlayText ?? "");
+  const promptDirty =
+    (promptValue.trim() !== piece.imagePrompt || overlayTextDirty) && promptValue.trim().length > 0;
+
+  // A "running" status whose lock isn't active anymore (imageGenActive
+  // false, computed server-side) means the last run got orphaned — same
+  // stale-lock window POST .../image/generate itself reclaims
+  // (lib/image-generation.ts's IMAGE_GEN_STALE_RUNNING_MS). Treated like a
+  // failure in the UI so Continuar/Gerar de novo become available again.
+  const imageGenStuck =
+    piece.imageGenStatus === "failed" || (piece.imageGenStatus === "running" && !piece.imageGenActive);
+  const canGenerateImages = canMutateImages && imageGenEnabled && !isReels;
+  // The failure banner already offers Continuar/Gerar de novo when stuck —
+  // showing the regular generate button too would just duplicate those
+  // actions right next to it.
+  const showGenerateButton = canGenerateImages && !piece.imageGenActive && !imageGenStuck;
 
   const atCarrosselLimit = isCarrossel && piece.images.length >= MAX_CARROSSEL_IMAGES;
   // reels/stories already hold their single allowed media item — the
@@ -203,7 +306,10 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
       const res = await fetch(`/api/pieces/${piece.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ imagePrompt: promptValue.trim() }),
+        body: JSON.stringify({
+          imagePrompt: promptValue.trim(),
+          ...(isCarrossel ? {} : { overlayText: overlayTextValue.trim() }),
+        }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -480,6 +586,111 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
     }
   }
 
+  // Polls while a generation run owns the lock (queued, or running within
+  // the stale-lock window — see imageGenActive on PieceCardData) so the
+  // spinner/progress text picks up new images and the eventual done/failed
+  // status without a manual refresh. A single interval per active run;
+  // cleared on cleanup so it never accumulates across re-renders.
+  useEffect(() => {
+    if (!piece.imageGenActive) return;
+    const interval = setInterval(() => router.refresh(), 4000);
+    return () => clearInterval(interval);
+  }, [piece.imageGenActive, router]);
+
+  async function requestGeneration(mode: "replace" | "resume" | "recompose") {
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      const res = await fetch(`/api/pieces/${piece.id}/image/generate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setGenerateError(body?.error ?? "Não foi possível iniciar a geração de imagens.");
+        return;
+      }
+      setConfirmRegenerate(false);
+      router.refresh();
+    } catch {
+      setGenerateError("Falha de rede ao iniciar a geração de imagens.");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  // addPromptSlide/removePromptSlide keep overlayTextsValue the same length
+  // as imagePromptsValue at all times, so saveImagePrompts can always submit
+  // two arrays of matching size (overlayTexts deve ter o mesmo tamanho de
+  // imagePrompts — see PATCH /api/pieces/[id]).
+  function addPromptSlide() {
+    if (imagePromptsValue.length >= MAX_CARROSSEL_IMAGES) return;
+    setImagePromptsValue((prev) => [...prev, ""]);
+    setOverlayTextsValue((prev) => [...prev, ""]);
+  }
+
+  // 2 mirrors lib/validation.ts's imagePromptsSchema (imagePrompts needs
+  // 2-10 entries) — a distinct rule from MIN_CARROSSEL_IMAGES_TO_APPROVE
+  // (minimum uploaded images) that happens to share the same number.
+  function removePromptSlide(index: number) {
+    if (imagePromptsValue.length <= 2) return;
+    setImagePromptsValue((prev) => prev.filter((_, i) => i !== index));
+    setOverlayTextsValue((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function updatePromptSlide(index: number, value: string) {
+    setImagePromptsValue((prev) => prev.map((p, i) => (i === index ? value : p)));
+  }
+
+  // Legacy pieces can have overlayTexts shorter than imagePrompts (or
+  // empty) — pad with "" for any slide missing an entry so the editor
+  // always shows one input per current slide.
+  function updateOverlayTextSlide(index: number, value: string) {
+    setOverlayTextsValue((prev) => {
+      const padded = imagePromptsValue.map((_, i) => prev[i] ?? "");
+      padded[index] = value;
+      return padded;
+    });
+  }
+
+  function startEditingPrompts() {
+    setOverlayTextsValue(imagePromptsValue.map((_, i) => piece.overlayTexts[i] ?? ""));
+    setEditingPrompts(true);
+  }
+
+  function cancelEditingPrompts() {
+    setEditingPrompts(false);
+    setImagePromptsValue(piece.imagePrompts);
+    setOverlayTextsValue(piece.overlayTexts);
+    setPromptsError(null);
+  }
+
+  async function saveImagePrompts() {
+    setSavingPrompts(true);
+    setPromptsError(null);
+    try {
+      const trimmedPrompts = imagePromptsValue.map((p) => p.trim());
+      const trimmedOverlayTexts = imagePromptsValue.map((_, i) => (overlayTextsValue[i] ?? "").trim());
+      const res = await fetch(`/api/pieces/${piece.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ imagePrompts: trimmedPrompts, overlayTexts: trimmedOverlayTexts }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setPromptsError(body.error ?? "Não foi possível salvar os prompts.");
+        return;
+      }
+      setEditingPrompts(false);
+      router.refresh();
+    } catch {
+      setPromptsError("Falha de rede ao salvar os prompts.");
+    } finally {
+      setSavingPrompts(false);
+    }
+  }
+
   async function setStatus(status: "approved" | "draft") {
     setApproving(true);
     setApproveError(null);
@@ -502,10 +713,236 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
     }
   }
 
+  // Rendered next to "Copiar prompt"/"Editar" in both places they appear
+  // (with images, inside promptEditor below, and without images, in the
+  // empty-prompt block further down) — kept as one function so the
+  // generate/continue/regenerate button logic isn't duplicated.
+  function renderGenerateButton() {
+    if (!showGenerateButton) return null;
+
+    if (imageItems.length === 0) {
+      return (
+        <button
+          type="button"
+          onClick={() => requestGeneration("replace")}
+          disabled={generating}
+          className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-50"
+        >
+          {generating ? "Gerando..." : "Gerar imagens"}
+        </button>
+      );
+    }
+
+    if (confirmRegenerate) {
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => requestGeneration("replace")}
+            disabled={generating}
+            className="rounded-md border border-amber-400 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 disabled:opacity-50"
+          >
+            {generating ? "Gerando..." : "Substitui as imagens atuais. Confirmar?"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmRegenerate(false)}
+            disabled={generating}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+          >
+            Cancelar
+          </button>
+        </>
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirmRegenerate(true)}
+        className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+      >
+        Gerar de novo
+      </button>
+    );
+  }
+
+  // "Reaplicar texto" — recomposes the overlay text on top of the already
+  // generated photo(s) without calling the image model again (mode:
+  // "recompose"). Shown whenever at least one image has a sourceUrl to
+  // recompose from, regardless of imageGenEnabled/isReels (reels never has
+  // a sourceUrl, so this simply never renders there). No confirmation step:
+  // unlike "Gerar de novo" it doesn't discard any generated photo.
+  function renderRecomposeButton() {
+    if (!canMutateImages || piece.imageGenActive) return null;
+    if (!imageItems.some((image) => image.sourceUrl)) return null;
+
+    return (
+      <button
+        type="button"
+        onClick={() => requestGeneration("recompose")}
+        disabled={generating}
+        title="Reaplica o texto sobre a foto sem gerar de novo"
+        className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-50"
+      >
+        {generating ? "Aguarde..." : "Reaplicar texto"}
+      </button>
+    );
+  }
+
+  // Overlay text for estatico/stories (carrossel uses overlayTextsValue —
+  // see renderCarrosselPrompts). Read view shows the current saved text (or
+  // a hint that the photo stays clean); edit view is a single textarea
+  // shared with the imagePrompt editor above it.
+  function renderOverlayTextDisplay() {
+    const text = (piece.overlayText ?? "").trim();
+    return text ? (
+      <p className="text-sm text-zinc-800">
+        <span className="font-medium text-zinc-500">Texto na imagem:</span> {text}
+      </p>
+    ) : (
+      <p className="text-xs text-zinc-400">Sem texto na imagem: a foto sai limpa.</p>
+    );
+  }
+
+  function renderOverlayTextEditor() {
+    return (
+      <div className="flex flex-col gap-1">
+        <label htmlFor={`overlay-text-${piece.id}`} className="text-xs font-medium text-zinc-500">
+          Texto na imagem (opcional)
+        </label>
+        <textarea
+          id={`overlay-text-${piece.id}`}
+          value={overlayTextValue}
+          onChange={(e) => setOverlayTextValue(e.target.value)}
+          maxLength={MAX_OVERLAY_TEXT_LEN}
+          rows={2}
+          placeholder="Deixe em branco para a foto sair limpa"
+          className="w-full resize-none rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
+        />
+      </div>
+    );
+  }
+
+  // Per-slide prompts (carrossel only) — read view lists "Slide N: ..."; edit
+  // view is one <textarea> per slide plus +slide/remover controls. Rendered
+  // below the main imagePrompt wherever it's shown (with/without images).
+  function renderCarrosselPrompts() {
+    if (!isCarrossel) return null;
+
+    return (
+      <div className="mt-2 flex flex-col gap-1.5 border-t border-zinc-100 pt-2">
+        <span className="text-xs font-medium text-zinc-500">Prompts por slide</span>
+        {!editingPrompts ? (
+          <>
+            {imagePromptsValue.length > 0 && (
+              <ol className="flex flex-col gap-2 text-sm text-zinc-600">
+                {imagePromptsValue.map((prompt, index) => {
+                  const overlayText = (piece.overlayTexts[index] ?? "").trim();
+                  return (
+                    <li key={index}>
+                      <span className="font-medium text-zinc-500">Slide {index + 1}:</span> {prompt}
+                      <div className="text-xs text-zinc-400">
+                        {overlayText ? `Texto: ${overlayText}` : "sem texto"}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+            {imagePromptsValue.length < 2 && (
+              <p className="text-xs text-amber-700">
+                Sem prompts por slide: a geração automática cria só a capa.
+              </p>
+            )}
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={startEditingPrompts}
+                className="self-start rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+              >
+                Editar prompts por slide
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            {imagePromptsValue.map((prompt, index) => (
+              <div key={index} className="flex flex-col gap-1 rounded-md border border-zinc-100 p-2">
+                <div className="flex gap-2">
+                  <span className="pt-2 text-xs font-medium text-zinc-500">{index + 1}.</span>
+                  <textarea
+                    value={prompt}
+                    onChange={(e) => updatePromptSlide(index, e.target.value)}
+                    rows={2}
+                    className="w-full resize-none rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removePromptSlide(index)}
+                    disabled={imagePromptsValue.length <= 2}
+                    className="shrink-0 self-start rounded-md border border-zinc-300 px-2 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40"
+                  >
+                    remover
+                  </button>
+                </div>
+                <div className="pl-5">
+                  <label
+                    htmlFor={`overlay-text-slide-${piece.id}-${index}`}
+                    className="text-xs font-medium text-zinc-500"
+                  >
+                    Texto do slide {index + 1}
+                  </label>
+                  <input
+                    id={`overlay-text-slide-${piece.id}-${index}`}
+                    type="text"
+                    value={overlayTextsValue[index] ?? ""}
+                    onChange={(e) => updateOverlayTextSlide(index, e.target.value)}
+                    maxLength={MAX_OVERLAY_TEXT_LEN}
+                    placeholder="Deixe em branco para o slide sair sem texto"
+                    className="w-full rounded-md border border-zinc-300 p-1.5 text-sm text-zinc-900"
+                  />
+                </div>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addPromptSlide}
+              disabled={imagePromptsValue.length >= MAX_CARROSSEL_IMAGES}
+              className="self-start rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40"
+            >
+              + slide
+            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={saveImagePrompts}
+                disabled={savingPrompts}
+                className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {savingPrompts ? "Salvando..." : "Salvar"}
+              </button>
+              <button
+                type="button"
+                onClick={cancelEditingPrompts}
+                disabled={savingPrompts}
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+              >
+                Cancelar
+              </button>
+            </div>
+            {promptsError && <p className="text-sm text-red-600">{promptsError}</p>}
+          </>
+        )}
+      </div>
+    );
+  }
+
   const promptEditor = !editingPrompt ? (
     <>
       <p className="whitespace-pre-wrap text-sm text-zinc-600">{piece.imagePrompt}</p>
-      <div className="flex gap-2">
+      {!isCarrossel && renderOverlayTextDisplay()}
+      <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={copyPrompt}
@@ -522,7 +959,11 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
             Editar
           </button>
         )}
+        {renderGenerateButton()}
+        {renderRecomposeButton()}
       </div>
+      {generateError && <p className="text-sm text-red-600">{generateError}</p>}
+      {renderCarrosselPrompts()}
     </>
   ) : (
     <>
@@ -532,6 +973,7 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
         rows={3}
         className="w-full resize-none rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
       />
+      {!isCarrossel && renderOverlayTextEditor()}
       <div className="flex gap-2">
         <button
           type="button"
@@ -546,6 +988,7 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
           onClick={() => {
             setEditingPrompt(false);
             setPromptValue(piece.imagePrompt);
+            setOverlayTextValue(piece.overlayText ?? "");
             setPromptError(null);
           }}
           disabled={savingPrompt}
@@ -584,7 +1027,7 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
       ? "Imagem (JPEG/PNG/WebP, até 8MB) ou vídeo (MP4/MOV, 9:16, até 60 s, até 200MB)"
       : `ou arraste ${isCarrossel ? "arquivos" : "um arquivo"} aqui (JPEG, PNG ou WebP, até 8MB)`;
 
-  const uploadDropzone = canMutateImages && !atMediaLimit && (
+  const uploadDropzone = canMutateImages && !atMediaLimit && !piece.imageGenActive && (
     <div
       onDragOver={(e) => {
         e.preventDefault();
@@ -620,6 +1063,48 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
           {piece.pillar} · {piece.segment}
         </span>
       </div>
+
+      {piece.imageGenActive && (
+        <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+          <span>
+            {isCarrossel
+              ? `Gerando imagens (${imageItems.length} de ${piece.imagePrompts.length || 1} prontas)`
+              : "Gerando imagens..."}
+          </span>
+        </div>
+      )}
+
+      {imageGenStuck && (
+        <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+          <p>{piece.imageGenError ?? "Geração interrompida"}</p>
+          {canGenerateImages && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => requestGeneration("resume")}
+                disabled={generating}
+                className="rounded-md bg-amber-800 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {generating ? "Aguarde..." : "Continuar"}
+              </button>
+              <button
+                type="button"
+                onClick={() => requestGeneration("replace")}
+                disabled={generating}
+                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 disabled:opacity-50"
+              >
+                {generating ? "Aguarde..." : "Gerar de novo"}
+              </button>
+            </div>
+          )}
+          {generateError && <p className="text-red-700">{generateError}</p>}
+        </div>
+      )}
+
+      {piece.imageGenStatus === "done" && piece.imageGenError && (
+        <p className="text-xs text-amber-700">{piece.imageGenError}</p>
+      )}
 
       <div className="flex flex-col gap-2">
         {videoMedia && (
@@ -777,7 +1262,8 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
         {piece.images.length === 0 && !editingPrompt && (
           <div className="rounded-md border border-dashed border-zinc-300 p-3 text-sm text-zinc-600">
             <p className="whitespace-pre-wrap">{piece.imagePrompt}</p>
-            <div className="mt-2 flex gap-2">
+            {!isCarrossel && <div className="mt-1">{renderOverlayTextDisplay()}</div>}
+            <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={copyPrompt}
@@ -794,7 +1280,10 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
                   Editar
                 </button>
               )}
+              {renderGenerateButton()}
             </div>
+            {generateError && <p className="mt-2 text-sm text-red-600">{generateError}</p>}
+            {renderCarrosselPrompts()}
           </div>
         )}
 
@@ -806,6 +1295,7 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
               rows={3}
               className="w-full resize-none rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
             />
+            {!isCarrossel && renderOverlayTextEditor()}
             <div className="flex gap-2">
               <button
                 type="button"
@@ -820,6 +1310,7 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
                 onClick={() => {
                   setEditingPrompt(false);
                   setPromptValue(piece.imagePrompt);
+                  setOverlayTextValue(piece.overlayText ?? "");
                   setPromptError(null);
                 }}
                 disabled={savingPrompt}
@@ -918,20 +1409,22 @@ export function PieceCard({ piece, readOnly = false }: { piece: PieceCardData; r
             ) : (
               <>
                 <span className="text-xs text-zinc-400">
-                  {canApprove
-                    ? "Pronto para aprovar"
-                    : isReels
-                      ? "Reels exige exatamente 1 vídeo para aprovar"
-                      : isStories
-                        ? "Stories exige 1 imagem ou 1 vídeo (≤ 60 s) para aprovar"
-                        : piece.images.length === 0
-                          ? "Envie uma imagem para aprovar"
-                          : `Envie mais ${MIN_CARROSSEL_IMAGES_TO_APPROVE - piece.images.length} imagem(ns) para aprovar`}
+                  {piece.imageGenActive
+                    ? "Aguarde a geração terminar"
+                    : canApprove
+                      ? "Pronto para aprovar"
+                      : isReels
+                        ? "Reels exige exatamente 1 vídeo para aprovar"
+                        : isStories
+                          ? "Stories exige 1 imagem ou 1 vídeo (≤ 60 s) para aprovar"
+                          : piece.images.length === 0
+                            ? "Envie uma imagem para aprovar"
+                            : `Envie mais ${MIN_CARROSSEL_IMAGES_TO_APPROVE - piece.images.length} imagem(ns) para aprovar`}
                 </span>
                 <button
                   type="button"
                   onClick={() => setStatus("approved")}
-                  disabled={!canApprove || approving}
+                  disabled={!canApprove || approving || piece.imageGenActive}
                   className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {approving ? "Aprovando..." : "Aprovar"}

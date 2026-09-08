@@ -15,7 +15,9 @@
     "smoke": "node scripts/api-smoke.mjs",
     "publish:dry": "node scripts/publish-dry-run.mjs",
     "report:fixture": "node scripts/insights-fixture.mjs",
-    "test:schedule": "node --experimental-strip-types scripts/schedule-check.mjs"
+    "test:schedule": "node --experimental-strip-types scripts/schedule-check.mjs",
+    "image-gen:check": "node scripts/image-gen-check.mjs",
+    "overlay:check": "node --experimental-strip-types scripts/overlay-check.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -24,6 +26,7 @@
     "next": "16.3.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "sharp": "^0.35.4",
     "web-push": "^3.6.7",
     "zod": "^4.4.3"
   },

@@ -24,6 +24,34 @@ model Piece {
   caption     String
   imagePrompt String
 
+  // Per-slide prompts for the automated image generation pipeline (a later
+  // task) — only meaningful for format=carrossel, one entry per slide
+  // (2-10, see lib/validation.ts's createPieceSchema/patchPieceSchema);
+  // enforced at the route level since the rule depends on `format`. Every
+  // other format keeps this empty and drives off `imagePrompt` alone.
+  // imageGenStatus tracks that pipeline's lifecycle: idle (never queued or
+  // not applicable) -> queued (accepted, waiting for a worker) -> running
+  // (actively generating) -> done (images attached) or failed (see
+  // imageGenError). imageGenAt is set each time the status changes so the
+  // UI/ops can tell how long a piece has been stuck in a given state.
+  imagePrompts    String[] @default([])
+  imageGenStatus  String   @default("idle")
+  imageGenError   String?
+  imageGenAt      DateTime?
+
+  // The app composes this text as an overlay on top of the generated/uploaded
+  // photo (the image model can't reliably render pt-BR text) rather than
+  // asking the model to draw it. overlayText is for estatico/stories — a
+  // single overlay for the piece's one image. overlayTexts is the carrossel
+  // equivalent: one entry per slide, parallel to imagePrompts by index
+  // ("" means that slide has no overlay). Both are optional/empty by default
+  // — plenty of pieces ship with no text baked into the image at all.
+  // Ignored (and rejected) on carrossel for overlayText, and on every format
+  // but carrossel for overlayTexts — enforced at the route level since the
+  // rule depends on `format`.
+  overlayText  String?
+  overlayTexts String[] @default([])
+
   // Uploaded by the founder during approval (POST/DELETE
   // /api/pieces/[id]/image, or POST .../video for reels/stories video);
   // never writable directly through POST/PATCH. Ordered by sortOrder —
@@ -100,6 +128,13 @@ model PieceImage {
   contentType String?
   durationSec Int?
   coverUrl    String?
+  // The clean, text-free photo `url` was composed from (i.e. before the
+  // Piece's overlayText/overlayTexts entry for this slide was drawn on top).
+  // Kept so the overlay can be recomposed from scratch — a new caption, a
+  // font tweak — without regenerating the underlying image. Null when the
+  // image has no overlay baked in, or was uploaded manually with no known
+  // source.
+  sourceUrl   String?
   createdAt   DateTime @default(now())
 
   @@index([pieceId, sortOrder])
