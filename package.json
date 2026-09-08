@@ -17,7 +17,8 @@
     "report:fixture": "node scripts/insights-fixture.mjs",
     "test:schedule": "node --experimental-strip-types scripts/schedule-check.mjs",
     "image-gen:check": "node scripts/image-gen-check.mjs",
-    "overlay:check": "node --experimental-strip-types scripts/overlay-check.mjs"
+    "overlay:check": "node --experimental-strip-types scripts/overlay-check.mjs",
+    "image-gen:compare": "node --experimental-strip-types scripts/image-gen-compare.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

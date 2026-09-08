@@ -252,6 +252,7 @@ export async function generatePieceImages(
       try {
         const prompt = appendNoTextSuffix(promptForAspect(prompts[i], aspect));
         const photo = await provider.generate({ prompt, aspect });
+        console.info(`image-gen: piece ${pieceId} slide ${i} via ${photo.model ?? provider.name}`);
         const sourceUrl = await storePieceMediaBytes({
           pieceId,
           sortOrder: i,
