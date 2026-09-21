@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Smoke test for the Piece lifecycle API (app/api/pieces/**). Exercises the
 // DoD cases from the task brief plus a couple of adjacent edge cases (409
-// duplicate-in-week, unapprove). Run `pnpm dev` (or `PORT=3001 pnpm dev`)
-// first, then `pnpm smoke`.
+// duplicate-in-week, unapprove, stale-publishAt auto-reschedule on approve).
+// Run `pnpm dev` (or `PORT=3001 pnpm dev`) first, then `pnpm smoke`.
 //
 // Usage: PORT=3001 node scripts/api-smoke.mjs
 
@@ -303,8 +303,11 @@ async function main() {
     assert(Array.isArray(created?.images) && created.images.length === 2, "listed piece has its 2 images");
   }
 
-  // 8. Stale schedule: approving a piece with publishAt far in the past -> 422
-  console.log("\n8. PATCH status=approved with a stale publishAt (>24h in the past)");
+  // 8. Stale schedule on approve: piece's STORED publishAt is far in the
+  // past (drifted while it sat in draft) and the caller approves without
+  // sending an explicit publishAt -> reschedules atomically instead of
+  // 422ing, landing on the next free cadence slot.
+  console.log("\n8. PATCH status=approved with a stale STORED publishAt -> auto-reschedule");
   {
     const staleDate = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     const { res: patchDateRes } = await jsonFetch(`/api/pieces/${pieceId}`, {
@@ -314,10 +317,39 @@ async function main() {
     });
     assert(patchDateRes.status === 200, `publishAt update succeeds (got ${patchDateRes.status})`);
 
+    const beforeApprove = new Date();
     const { res, body } = await jsonFetch(`/api/pieces/${pieceId}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ status: "approved" }),
+    });
+    assert(res.status === 200, `status is 200 (got ${res.status})`);
+    assert(body?.rescheduled === true, `response has rescheduled: true (got ${body?.rescheduled})`);
+    assert(body?.piece?.status === "approved", `piece status is approved (got ${body?.piece?.status})`);
+    assert(
+      typeof body?.piece?.publishAt === "string" && new Date(body.piece.publishAt) > beforeApprove,
+      `piece.publishAt was moved into the future (got ${body?.piece?.publishAt})`,
+    );
+  }
+
+  // 9. Stale schedule with an EXPLICIT publishAt on approve -> still 422s
+  // (the reschedule fallback only applies when the caller didn't set
+  // publishAt themselves in this same PATCH).
+  console.log("\n9. PATCH status=approved with an explicit stale publishAt -> 422 (no reschedule)");
+  {
+    const { res: unapproveRes, body: unapproveBody } = await jsonFetch(`/api/pieces/${pieceId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "draft" }),
+    });
+    assert(unapproveRes.status === 200, `unapprove succeeds (got ${unapproveRes.status})`);
+    assert(unapproveBody?.piece?.status === "draft", `piece status is draft (got ${unapproveBody?.piece?.status})`);
+
+    const staleDate = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const { res, body } = await jsonFetch(`/api/pieces/${pieceId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "approved", publishAt: staleDate }),
     });
     assert(res.status === 422, `status is 422 (got ${res.status})`);
     assert(body && typeof body.error === "string", "response has an error field");

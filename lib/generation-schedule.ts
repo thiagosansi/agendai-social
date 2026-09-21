@@ -56,7 +56,13 @@ function parsePostingTime(time: string): { hour: number; minute: number } {
 // Paulo calendar fields, then each candidate day's local HH:MM is converted
 // back to a real UTC instant by shifting the other way. This keeps the file
 // dependency-free.
-export function computeNextPublishSlots(now: Date, weekdays: number[], time: string, count: number): Date[] {
+export function computeNextPublishSlots(
+  now: Date,
+  weekdays: number[],
+  time: string,
+  count: number,
+  minLeadMs: number = MIN_APPROVAL_LEAD_MS,
+): Date[] {
   if (count <= 0) return [];
 
   const validWeekdays = Array.from(
@@ -65,7 +71,7 @@ export function computeNextPublishSlots(now: Date, weekdays: number[], time: str
   if (validWeekdays.length === 0) return [];
 
   const { hour, minute } = parsePostingTime(time);
-  const minInstantMs = now.getTime() + MIN_APPROVAL_LEAD_MS;
+  const minInstantMs = now.getTime() + minLeadMs;
 
   // Shift now's instant by the offset so its UTC-getters read as São Paulo
   // local calendar fields.
@@ -93,4 +99,24 @@ export function computeNextPublishSlots(now: Date, weekdays: number[], time: str
   }
 
   return slots;
+}
+
+// Finds the earliest cadence slot not already occupied by another piece's
+// publishAt, for PATCH /api/pieces/[id]'s approve-time reschedule (a piece
+// that sat past its slot moves here instead of staying stuck in draft).
+//
+// Called with `minLeadMs: 0` — deliberately bypassing the MIN_APPROVAL_LEAD_MS
+// invariant documented above. That lead exists to give the owner a review
+// window before a slot arrives; on this path the owner has *already*
+// reviewed and is approving right now, so there is nothing left to protect
+// by pushing the slot further out. Requesting `occupied.length + 1` slots
+// keeps the scan bounded by computeNextPublishSlots's own `maxDayOffset`
+// logic (which sizes its search window off the requested count) while still
+// guaranteeing at least one candidate survives after occupied slots are
+// filtered out.
+export function pickNextFreeSlot(now: Date, weekdays: number[], time: string, occupied: Date[]): Date | null {
+  const occupiedMs = new Set(occupied.map((date) => date.getTime()));
+  const candidates = computeNextPublishSlots(now, weekdays, time, occupied.length + 1, 0);
+  const free = candidates.find((slot) => !occupiedMs.has(slot.getTime()));
+  return free ?? null;
 }

@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import {
   computeGenerationDue,
   computeNextPublishSlots,
+  pickNextFreeSlot,
   MIN_APPROVAL_LEAD_MS,
 } from "../lib/generation-schedule.ts";
 
@@ -151,4 +152,79 @@ test("computeNextPublishSlots: now exactly on a slot is included (lead time alre
   const slots = computeNextPublishSlots(now, [2], "11:00", 1);
   assert.equal(slots.length, 1);
   assert.equal(slots[0].toISOString(), slotInstant.toISOString());
+});
+
+test("computeNextPublishSlots: minLeadMs=0 accepts a slot the default 24h lead would skip", () => {
+  const now = new Date("2026-08-17T15:00:00.000Z"); // Monday 12:00 BRT
+  // Tuesday 11:00 BRT (Aug18 14:00Z) is only 23h away — less than the
+  // default MIN_APPROVAL_LEAD_MS (24h) — so with lead 0 it's still accepted.
+  const zeroLead = computeNextPublishSlots(now, [2, 4], "11:00", 1, 0);
+  assert.equal(zeroLead.length, 1);
+  assert.equal(zeroLead[0].toISOString(), "2026-08-18T14:00:00.000Z");
+  assert.ok(zeroLead[0].getTime() - now.getTime() < MIN_APPROVAL_LEAD_MS);
+});
+
+test("computeNextPublishSlots: default lead (5th arg omitted) skips the same near slot pickNextFreeSlot would accept", () => {
+  const now = new Date("2026-08-17T15:00:00.000Z"); // Monday 12:00 BRT
+  const defaultLead = computeNextPublishSlots(now, [2, 4], "11:00", 1);
+  assert.equal(defaultLead.length, 1);
+  // Tuesday is too close (23h < 24h lead), so the default lands on Thursday.
+  assert.equal(defaultLead[0].toISOString(), "2026-08-20T14:00:00.000Z");
+});
+
+test("computeNextPublishSlots: omitting the 5th arg matches passing MIN_APPROVAL_LEAD_MS explicitly", () => {
+  const now = new Date("2026-08-17T11:00:00.000Z"); // Monday 08:00 BRT
+  const omitted = computeNextPublishSlots(now, [2, 4], "11:00", 3);
+  const explicit = computeNextPublishSlots(now, [2, 4], "11:00", 3, MIN_APPROVAL_LEAD_MS);
+  assert.deepEqual(
+    omitted.map((slot) => slot.toISOString()),
+    explicit.map((slot) => slot.toISOString()),
+  );
+});
+
+test("pickNextFreeSlot: returns the first cadence slot when nothing is occupied", () => {
+  const now = new Date("2026-08-17T11:00:00.000Z"); // Monday 08:00 BRT
+  const slot = pickNextFreeSlot(now, [2, 4], "11:00", []);
+  assert.ok(slot instanceof Date);
+  assert.equal(slot.toISOString(), "2026-08-18T14:00:00.000Z"); // Tue 11:00 BRT
+});
+
+test("pickNextFreeSlot: skips an occupied first slot and returns the next one", () => {
+  const now = new Date("2026-08-17T11:00:00.000Z"); // Monday 08:00 BRT
+  const occupied = [new Date("2026-08-18T14:00:00.000Z")]; // Tue 11:00 BRT taken
+  const slot = pickNextFreeSlot(now, [2, 4], "11:00", occupied);
+  assert.ok(slot instanceof Date);
+  assert.equal(slot.toISOString(), "2026-08-20T14:00:00.000Z"); // Thu 11:00 BRT
+});
+
+test("pickNextFreeSlot: skips two consecutive occupied slots and returns the next", () => {
+  const now = new Date("2026-08-17T11:00:00.000Z"); // Monday 08:00 BRT
+  const occupied = [
+    new Date("2026-08-18T14:00:00.000Z"), // Tue 11:00 BRT
+    new Date("2026-08-20T14:00:00.000Z"), // Thu 11:00 BRT
+  ];
+  const slot = pickNextFreeSlot(now, [2, 4], "11:00", occupied);
+  assert.ok(slot instanceof Date);
+  assert.equal(slot.toISOString(), "2026-08-25T14:00:00.000Z"); // next Tue 11:00 BRT
+});
+
+test("pickNextFreeSlot: occupied dates that aren't cadence slots don't affect the result", () => {
+  const now = new Date("2026-08-17T11:00:00.000Z"); // Monday 08:00 BRT
+  // Wednesday isn't a configured weekday ([2, 4]), so this occupied date
+  // never matches a candidate slot and the free slot is unchanged.
+  const occupied = [new Date("2026-08-19T14:00:00.000Z")];
+  const withIrrelevantOccupied = pickNextFreeSlot(now, [2, 4], "11:00", occupied);
+  const withNoneOccupied = pickNextFreeSlot(now, [2, 4], "11:00", []);
+  assert.equal(withIrrelevantOccupied.toISOString(), withNoneOccupied.toISOString());
+  assert.equal(withIrrelevantOccupied.toISOString(), "2026-08-18T14:00:00.000Z");
+});
+
+test("pickNextFreeSlot: empty weekdays returns null", () => {
+  const now = new Date("2026-08-17T11:00:00.000Z");
+  assert.equal(pickNextFreeSlot(now, [], "11:00", []), null);
+});
+
+test("pickNextFreeSlot: invalid weekdays (out of range / non-integer) return null", () => {
+  const now = new Date("2026-08-17T11:00:00.000Z");
+  assert.equal(pickNextFreeSlot(now, [7, -1, 1.5], "11:00", []), null);
 });

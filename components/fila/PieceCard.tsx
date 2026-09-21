@@ -7,7 +7,7 @@ import { upload } from "@vercel/blob/client";
 import { Loader2 } from "lucide-react";
 import { FormatBadge, StatusBadge } from "@/components/Badges";
 import { ImageLightbox } from "@/components/fila/ImageLightbox";
-import { publishCountdown } from "@/lib/format";
+import { formatDateTimeSP, fromSaoPauloDateTimeLocal, publishCountdown, toSaoPauloDateTimeLocal } from "@/lib/format";
 import { MAX_OVERLAY_TEXT_LEN } from "@/lib/validation";
 import type { ImageGenStatus } from "@/lib/validation";
 
@@ -71,6 +71,14 @@ const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_CARROSSEL_IMAGES = 10;
 const MIN_CARROSSEL_IMAGES_TO_APPROVE = 2;
 
+// Mirrors STALE_SCHEDULE_MS in app/api/pieces/[id]/route.ts — that route
+// rejects approving a piece whose publishAt is more than 24h in the past
+// (auto-rescheduling instead when no explicit publishAt is sent). Duplicated
+// here client-side, same as ALLOWED_VIDEO_TYPES/MAX_VIDEO_BYTES above, so
+// this component doesn't depend on server-only route internals — used only
+// to decide whether to show the "data vencida" hint on draft pieces.
+const STALE_PUBLISH_AT_MS = 24 * 60 * 60 * 1000;
+
 // Video support (reels/stories only). Mirrors lib/validation.ts's
 // ALLOWED_VIDEO_CONTENT_TYPES/MAX_VIDEO_BYTES/MAX_REELS_DURATION_SEC/
 // MAX_STORY_VIDEO_DURATION_SEC — duplicated here client-side the same way
@@ -132,6 +140,13 @@ export function PieceCard({
   const isVideoFormat = isReels || isStories;
   const isDraft = piece.status === "draft";
   const canMutateImages = isDraft && !readOnly;
+  // A draft whose scheduled slot is already more than 24h in the past
+  // can't be approved as-is (see STALE_PUBLISH_AT_MS above) — approving it
+  // now auto-reschedules to the next free cadence slot instead.
+  const isStalePublishAt =
+    isDraft && new Date().getTime() - new Date(piece.publishAt).getTime() > STALE_PUBLISH_AT_MS;
+  const showPublishAtEditor =
+    !readOnly && (piece.status === "draft" || piece.status === "approved" || piece.status === "failed");
 
   // reels/stories hold at most one media item, and when present it's a
   // video row (kind="video" — stories may instead hold a single image, in
@@ -196,6 +211,28 @@ export function PieceCard({
 
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
+  // Set right after an approve whose response has rescheduled: true (the
+  // API auto-moved a stale draft to the next free cadence slot instead of
+  // rejecting the approval). Survives router.refresh() since it's local
+  // component state, keyed off setStatus rather than props; cleared on
+  // un-approve and re-derived on every fresh approve attempt below.
+  const [rescheduledNotice, setRescheduledNotice] = useState<string | null>(null);
+
+  // publishAt editor (draft/approved/failed, non-readOnly). Same
+  // "adjust state from props" sync pattern as syncedCaption/syncedPrompt —
+  // publishAtValue holds the datetime-local input string (São Paulo local
+  // time), converted via lib/format.ts's toSaoPauloDateTimeLocal /
+  // fromSaoPauloDateTimeLocal (pure UTC arithmetic, not the browser's own
+  // timezone).
+  const [publishAtValue, setPublishAtValue] = useState(toSaoPauloDateTimeLocal(piece.publishAt));
+  const [syncedPublishAt, setSyncedPublishAt] = useState(piece.publishAt);
+  if (piece.publishAt !== syncedPublishAt) {
+    setSyncedPublishAt(piece.publishAt);
+    setPublishAtValue(toSaoPauloDateTimeLocal(piece.publishAt));
+  }
+  const [editingPublishAt, setEditingPublishAt] = useState(false);
+  const [savingPublishAt, setSavingPublishAt] = useState(false);
+  const [publishAtError, setPublishAtError] = useState<string | null>(null);
 
   const [copied, setCopied] = useState(false);
 
@@ -322,6 +359,34 @@ export function PieceCard({
       setPromptError("Falha de rede ao salvar o prompt.");
     } finally {
       setSavingPrompt(false);
+    }
+  }
+
+  async function savePublishAt() {
+    const parsed = fromSaoPauloDateTimeLocal(publishAtValue);
+    if (!parsed) {
+      setPublishAtError("Informe uma data e hora válidas.");
+      return;
+    }
+    setSavingPublishAt(true);
+    setPublishAtError(null);
+    try {
+      const res = await fetch(`/api/pieces/${piece.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ publishAt: parsed.toISOString() }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setPublishAtError(body.error ?? "Não foi possível salvar a data de publicação.");
+        return;
+      }
+      setEditingPublishAt(false);
+      router.refresh();
+    } catch {
+      setPublishAtError("Falha de rede ao salvar a data de publicação.");
+    } finally {
+      setSavingPublishAt(false);
     }
   }
 
@@ -694,6 +759,12 @@ export function PieceCard({
   async function setStatus(status: "approved" | "draft") {
     setApproving(true);
     setApproveError(null);
+    // Un-approving clears any stale reschedule notice from a previous
+    // approval right away; approving re-derives it below from the fresh
+    // response instead of leaving a notice from an earlier cycle around.
+    if (status === "draft") {
+      setRescheduledNotice(null);
+    }
     try {
       const res = await fetch(`/api/pieces/${piece.id}`, {
         method: "PATCH",
@@ -704,6 +775,13 @@ export function PieceCard({
       if (!res.ok) {
         setApproveError(body.error ?? "Não foi possível atualizar o status.");
         return;
+      }
+      if (status === "approved") {
+        setRescheduledNotice(
+          body.rescheduled === true && body.piece?.publishAt
+            ? `Reagendada para ${formatDateTimeSP(body.piece.publishAt)}`
+            : null,
+        );
       }
       router.refresh();
     } catch {
@@ -1059,6 +1137,14 @@ export function PieceCard({
       <div className="flex flex-wrap items-center gap-2">
         <FormatBadge format={piece.format} />
         <StatusBadge status={piece.status} />
+        {isStalePublishAt && (
+          <span
+            title="Ao aprovar, a peça será reagendada para o próximo horário livre da cadência."
+            className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+          >
+            Data vencida
+          </span>
+        )}
         <span className="text-xs text-zinc-500">
           {piece.pillar} · {piece.segment}
         </span>
@@ -1385,6 +1471,71 @@ export function PieceCard({
         )}
       </div>
 
+      {showPublishAtEditor && (
+        <div className="flex flex-col gap-2 border-t border-zinc-100 pt-3">
+          {!editingPublishAt ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm text-zinc-600">
+                Publicação: {formatDateTimeSP(piece.publishAt)} (horário de Brasília)
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPublishAtValue(toSaoPauloDateTimeLocal(piece.publishAt));
+                  setPublishAtError(null);
+                  setEditingPublishAt(true);
+                }}
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+              >
+                Alterar data
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <label htmlFor={`publish-at-${piece.id}`} className="text-xs font-medium text-zinc-500">
+                Publicação (horário de Brasília)
+              </label>
+              <input
+                id={`publish-at-${piece.id}`}
+                type="datetime-local"
+                value={publishAtValue}
+                onChange={(e) => setPublishAtValue(e.target.value)}
+                className="w-full rounded-md border border-zinc-300 p-2 text-sm text-zinc-900"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={savePublishAt}
+                  disabled={savingPublishAt}
+                  className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  {savingPublishAt ? "Salvando..." : "Salvar"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingPublishAt(false);
+                    setPublishAtValue(toSaoPauloDateTimeLocal(piece.publishAt));
+                    setPublishAtError(null);
+                  }}
+                  disabled={savingPublishAt}
+                  className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700"
+                >
+                  Cancelar
+                </button>
+              </div>
+              {publishAtError && <p className="text-sm text-red-600">{publishAtError}</p>}
+            </div>
+          )}
+          {isStalePublishAt && (
+            <p className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+              <span className="font-semibold">Data vencida.</span> Ao aprovar, a peça será reagendada para
+              o próximo horário livre da cadência.
+            </p>
+          )}
+        </div>
+      )}
+
       {readOnly ? (
         piece.status === "approved" && (
           <p className="border-t border-zinc-100 pt-3 text-sm text-zinc-600">
@@ -1433,6 +1584,7 @@ export function PieceCard({
             )}
           </div>
           {approveError && <p className="text-sm text-red-600">{approveError}</p>}
+          {rescheduledNotice && <p className="text-sm text-emerald-700">{rescheduledNotice}</p>}
         </>
       )}
 
